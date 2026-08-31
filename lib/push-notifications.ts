@@ -11,6 +11,18 @@ function arrayBufferToBase64(buffer: ArrayBuffer | null): string {
   return typeof window !== 'undefined' ? window.btoa(binary) : ''
 }
 
+// Utility to convert VAPID public key to Uint8Array
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const rawData = window.atob(base64)
+  const outputArray = new Uint8Array(rawData.length)
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i)
+  }
+  return outputArray
+}
+
 export function isPushSupported(): boolean {
   return (
     typeof window !== 'undefined' &&
@@ -54,28 +66,16 @@ export async function requestPushPermissionAndSubscribe(
       }
     }
 
-    // 3. Obtain or create PushSubscription
+    // 3. Obtain or create PushSubscription using real VAPID key
     let subscription = await registration.pushManager.getSubscription()
 
     if (!subscription) {
-      // VAPID Public key placeholder or fallback subscription
-      try {
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          // Exhala default public application server key or standard registration
-          applicationServerKey: new Uint8Array([
-            4, 18, 54, 98, 12, 45, 87, 102, 33, 91, 14, 76, 88, 19, 52, 63,
-            77, 89, 10, 44, 55, 66, 77, 88, 99, 11, 22, 33, 44, 55, 66, 77,
-            88, 99, 12, 23, 34, 45, 56, 67, 78, 89, 90, 11, 22, 33, 44, 55,
-            66, 77, 88, 99, 12, 34, 56, 78, 90, 12, 34, 56, 78, 90, 12, 34, 56,
-          ]),
-        })
-      } catch {
-        // Fallback for browsers with custom push configuration
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-        }).catch(() => null)
-      }
+      const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
+
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: vapidPublicKey ? urlBase64ToUint8Array(vapidPublicKey) : undefined,
+      })
     }
 
     // 4. Extract push credentials
@@ -111,7 +111,7 @@ export async function requestPushPermissionAndSubscribe(
           body: 'Notificaciones activadas. Recibirás avisos urgentes cuando tus amigos lo necesiten.',
           icon: '/favicon.ico',
         })
-      } catch {}
+      } catch { }
     }
 
     return { success: true, permission: 'granted' }
