@@ -34,6 +34,7 @@ CREATE TABLE public.friendships (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     smoker_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     friend_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'accepted' CHECK (status IN ('pending', 'accepted', 'rejected')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     CONSTRAINT unique_friendship UNIQUE (smoker_id, friend_id),
     CONSTRAINT no_self_friendship CHECK (smoker_id <> friend_id)
@@ -222,6 +223,13 @@ CREATE POLICY "Users can create friendships"
 CREATE POLICY "Users can delete their friendships"
     ON public.friendships
     FOR DELETE
+    TO authenticated
+    USING (auth.uid() = smoker_id OR auth.uid() = friend_id);
+
+-- Recipient or sender can update friendship status (e.g. accept pending request)
+CREATE POLICY "Users can update their friendships"
+    ON public.friendships
+    FOR UPDATE
     TO authenticated
     USING (auth.uid() = smoker_id OR auth.uid() = friend_id);
 

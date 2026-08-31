@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, useTransition } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -10,39 +10,58 @@ import {
   User,
   Droplets,
   Check,
-  Share2,
-  Copy,
-  CheckCheck,
   X,
   UserPlus,
   Sparkles,
   MessageCircle,
+  Search,
+  CheckCircle2,
+  Clock,
+  UserCheck,
+  UserX,
+  Loader2,
+  Share2,
+  Copy,
+  CheckCheck,
+  HeartHandshake,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
 import FriendChatModal from '@/components/FriendChatModal'
 
-type InviteTab = 'share' | 'join'
+type TabView = 'friends' | 'requests'
 
-interface QuittingFriend {
+interface FriendItem {
   id: string
+  friendshipId: string
   initials: string
   name: string
   status: string
+  role: 'smoker' | 'friend'
   avatarBg: string
   avatarText: string
   isWatered: boolean
+  smokeFreeSince?: string | null
 }
 
-interface SupportingFriend {
-  id: string
-  initials: string
+interface FriendRequestItem {
+  id: string // friendship id
+  requesterId: string
   name: string
-  status: string
+  initials: string
+  role: 'smoker' | 'friend'
   avatarBg: string
   avatarText: string
-  isWatered: boolean
+  createdAt: string
+}
+
+interface SearchResultUser {
+  id: string
+  full_name: string | null
+  role: 'smoker' | 'friend'
+  avatar_url: string | null
+  smoke_free_since: string | null
 }
 
 const isValidUUID = (id?: string | null): boolean => {
@@ -50,44 +69,78 @@ const isValidUUID = (id?: string | null): boolean => {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
 }
 
-// Lista 1: Dejando de fumar con UUIDs válidos por defecto
-const DEFAULT_QUITTING_FRIENDS: QuittingFriend[] = [
+const AVATAR_COLORS = [
+  { bg: 'bg-emerald-100', text: 'text-emerald-800' },
+  { bg: 'bg-teal-100', text: 'text-teal-800' },
+  { bg: 'bg-sky-100', text: 'text-sky-800' },
+  { bg: 'bg-amber-100', text: 'text-amber-800' },
+  { bg: 'bg-rose-100', text: 'text-rose-800' },
+  { bg: 'bg-indigo-100', text: 'text-indigo-800' },
+]
+
+function getAvatarColor(str: string) {
+  let hash = 0
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  const index = Math.abs(hash) % AVATAR_COLORS.length
+  return AVATAR_COLORS[index]
+}
+
+function getInitials(name: string) {
+  return (
+    name
+      .split(' ')
+      .filter(Boolean)
+      .map((n) => n[0])
+      .join('')
+      .substring(0, 2)
+      .toUpperCase() || 'AM'
+  )
+}
+
+// Datos de demostración iniciales (usados si aún no hay amigos en DB)
+const DEFAULT_DEMO_FRIENDS: FriendItem[] = [
   {
     id: '00000000-0000-4000-8000-000000000001',
+    friendshipId: 'demo-1',
     initials: 'MC',
     name: 'Marta Coll',
     status: '12 días sin fumar',
+    role: 'smoker',
     avatarBg: 'bg-emerald-100',
     avatarText: 'text-emerald-800',
     isWatered: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000002',
+    friendshipId: 'demo-2',
     initials: 'JP',
     name: 'Jordi Pons',
     status: '8 días sin fumar',
+    role: 'smoker',
     avatarBg: 'bg-amber-100',
     avatarText: 'text-amber-800',
     isWatered: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000003',
+    friendshipId: 'demo-3',
     initials: 'LV',
     name: 'Laura Vidal',
     status: '3 días sin fumar',
+    role: 'smoker',
     avatarBg: 'bg-sky-100',
     avatarText: 'text-sky-800',
     isWatered: false,
   },
-]
-
-// Lista 2: Apoyando con UUID válido por defecto
-const DEFAULT_SUPPORTING_FRIENDS: SupportingFriend[] = [
   {
     id: '00000000-0000-4000-8000-000000000004',
+    friendshipId: 'demo-4',
     initials: 'DR',
     name: 'David Roca',
-    status: 'Apoya a Marta',
+    status: 'Guardián de apoyo',
+    role: 'friend',
     avatarBg: 'bg-neutral-100',
     avatarText: 'text-neutral-700',
     isWatered: false,
@@ -96,31 +149,145 @@ const DEFAULT_SUPPORTING_FRIENDS: SupportingFriend[] = [
 
 export default function FriendsDashboard() {
   const router = useRouter()
-  const [activeTab] = useState<'home' | 'friends' | 'badges' | 'profile'>('friends')
+  const [currentTab, setCurrentTab] = useState<TabView>('friends')
   const [loading, setLoading] = useState<boolean>(true)
 
-  // Datos reales del usuario logueado
+  // Usuario autenticado
   const [userId, setUserId] = useState<string | null>(null)
-  const [profile, setProfile] = useState<Profile | null>(null)
+  const [userProfile, setUserProfile] = useState<Profile | null>(null)
   const [squadCode, setSquadCode] = useState<string>('')
   const [copiedCode, setCopiedCode] = useState<boolean>(false)
-  const [showInviteModal, setShowInviteModal] = useState<boolean>(false)
-  const [inviteTab, setInviteTab] = useState<InviteTab>('share')
-  const [friendCodeInput, setFriendCodeInput] = useState<string>('')
-  const [isConnecting, setIsConnecting] = useState<boolean>(false)
-  const [connectError, setConnectError] = useState<string | null>(null)
-  const [connectSuccess, setConnectSuccess] = useState<boolean>(false)
+
+  // Listas de Amigos y Solicitudes
+  const [friendsList, setFriendsList] = useState<FriendItem[]>(DEFAULT_DEMO_FRIENDS)
+  const [pendingReceived, setPendingReceived] = useState<FriendRequestItem[]>([])
+  const [pendingSent, setPendingSent] = useState<FriendRequestItem[]>([])
+
+  // Modal de Búsqueda por Nombre
+  const [showSearchModal, setShowSearchModal] = useState<boolean>(false)
+  const [searchQuery, setSearchQuery] = useState<string>('')
+  const [searchResults, setSearchResults] = useState<SearchResultUser[]>([])
+  const [isSearching, setIsSearching] = useState<boolean>(false)
+  const [sentRequestMap, setSentRequestMap] = useState<Record<string, boolean>>({})
+
+  // Chat & Toast
+  const [activeChatFriend, setActiveChatFriend] = useState<FriendItem | null>(null)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
-  const [activeChatFriend, setActiveChatFriend] = useState<QuittingFriend | SupportingFriend | null>(null)
+  const [processingId, setProcessingId] = useState<string | null>(null)
 
-  // Lista 1: Dejando de fumar
-  const [quittingFriends, setQuittingFriends] = useState<QuittingFriend[]>(DEFAULT_QUITTING_FRIENDS)
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg)
+    setTimeout(() => setToastMessage(null), 3000)
+  }, [])
 
-  // Lista 2: Apoyando
-  const [supportingFriends, setSupportingFriends] = useState<SupportingFriend[]>(DEFAULT_SUPPORTING_FRIENDS)
+  // Cargar amistades reales y solicitudes desde Supabase
+  const loadFriendsData = useCallback(async (currentUserId: string) => {
+    try {
+      // 1. Obtener todas las filas de friendships donde participe el usuario
+      const { data: friendships, error: friendshipsError } = await supabase
+        .from('friendships')
+        .select(`
+          id,
+          smoker_id,
+          friend_id,
+          status,
+          created_at,
+          smoker:profiles!friendships_smoker_id_fkey(id, full_name, role, smoke_free_since),
+          friend:profiles!friendships_friend_id_fkey(id, full_name, role, smoke_free_since)
+        `)
+        .or(`smoker_id.eq.${currentUserId},friend_id.eq.${currentUserId}`)
 
+      if (friendshipsError) {
+        console.warn('Could not fetch real friendships:', friendshipsError)
+        return
+      }
+
+      if (!friendships || friendships.length === 0) {
+        // Dejar demo friends si no tiene conexiones
+        return
+      }
+
+      const accepted: FriendItem[] = []
+      const received: FriendRequestItem[] = []
+      const sent: FriendRequestItem[] = []
+
+      friendships.forEach((row: any) => {
+        const isMeSender = row.smoker_id === currentUserId
+        const otherUser = isMeSender ? row.friend : row.smoker
+
+        if (!otherUser || otherUser.id === currentUserId) return
+
+        const name = otherUser.full_name || 'Compañero'
+        const initials = getInitials(name)
+        const color = getAvatarColor(name)
+        const status = row.status || 'accepted' // fallback for older rows
+
+        if (status === 'accepted') {
+          // Amistad activa
+          let statusText = 'Guardián de apoyo'
+          if (otherUser.role === 'smoker') {
+            if (otherUser.smoke_free_since) {
+              const diffMs = Math.max(0, Date.now() - new Date(otherUser.smoke_free_since).getTime())
+              const days = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+              statusText = `${days} ${days === 1 ? 'día sin fumar' : 'días sin fumar'}`
+            } else {
+              statusText = 'En racha sin fumar'
+            }
+          }
+
+          accepted.push({
+            id: otherUser.id,
+            friendshipId: row.id,
+            initials,
+            name,
+            status: statusText,
+            role: otherUser.role || 'smoker',
+            avatarBg: color.bg,
+            avatarText: color.text,
+            isWatered: false,
+            smokeFreeSince: otherUser.smoke_free_since,
+          })
+        } else if (status === 'pending') {
+          // Solicitud pendiente
+          if (isMeSender) {
+            sent.push({
+              id: row.id,
+              requesterId: otherUser.id,
+              name,
+              initials,
+              role: otherUser.role || 'smoker',
+              avatarBg: color.bg,
+              avatarText: color.text,
+              createdAt: row.created_at,
+            })
+          } else {
+            received.push({
+              id: row.id,
+              requesterId: otherUser.id,
+              name,
+              initials,
+              role: otherUser.role || 'smoker',
+              avatarBg: color.bg,
+              avatarText: color.text,
+              createdAt: row.created_at,
+            })
+          }
+        }
+      })
+
+      if (accepted.length > 0) {
+        setFriendsList(accepted)
+      }
+      setPendingReceived(received)
+      setPendingSent(sent)
+    } catch (err) {
+      console.error('Error loading friends data:', err)
+    }
+  }, [])
+
+  // Inicializar usuario autenticado
   useEffect(() => {
-    async function loadData() {
+    async function init() {
       try {
         const { data: { user }, error: authError } = await supabase.auth.getUser()
         if (authError || !user) {
@@ -129,121 +296,184 @@ export default function FriendsDashboard() {
         }
 
         setUserId(user.id)
+        setSquadCode(`EXHALA-${user.id.slice(0, 5).toUpperCase()}`)
 
-        const { data: userProfile } = await supabase
+        const { data: profile } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', user.id)
           .maybeSingle()
 
-        if (userProfile) {
-          setProfile(userProfile)
-          setSquadCode(`EXHALA-${user.id.slice(0, 5).toUpperCase()}`)
+        if (profile) setUserProfile(profile)
 
-          // Cargar amistades reales de la base de datos
-          const { data: realFriendships } = await supabase
-            .from('friendships')
-            .select(`
-              id,
-              smoker_id,
-              friend_id,
-              smoker:profiles!friendships_smoker_id_fkey(id, full_name, role, smoke_free_since),
-              friend:profiles!friendships_friend_id_fkey(id, full_name, role, smoke_free_since)
-            `)
-            .or(`smoker_id.eq.${user.id},friend_id.eq.${user.id}`)
-
-          // Lista base de amigos (sin incluir jamás al usuario actual)
-          let currentList: QuittingFriend[] = [...DEFAULT_QUITTING_FRIENDS].filter(
-            (item) => item.id !== user.id && item.id !== 'user-current'
-          )
-          let currentSupporters: SupportingFriend[] = [...DEFAULT_SUPPORTING_FRIENDS].filter(
-            (item) => item.id !== user.id && item.id !== 'user-current'
-          )
-
-          // Si hay amigos reales vinculados en Supabase, agregarlos a las listas
-          if (realFriendships && realFriendships.length > 0) {
-            realFriendships.forEach((f: any) => {
-              const otherProfile = f.smoker_id === user.id ? f.friend : f.smoker
-              if (otherProfile && otherProfile.id && otherProfile.id !== user.id) {
-                const friendName = otherProfile.full_name || 'Amigo'
-                const initials = friendName
-                  .split(' ')
-                  .map((n: string) => n[0])
-                  .join('')
-                  .substring(0, 2)
-                  .toUpperCase() || 'AM'
-
-                if (otherProfile.role === 'friend') {
-                  if (!currentSupporters.some((s) => s.id === otherProfile.id)) {
-                    currentSupporters.push({
-                      id: otherProfile.id,
-                      initials,
-                      name: friendName,
-                      status: `Apoya a tu squad`,
-                      avatarBg: 'bg-neutral-100',
-                      avatarText: 'text-neutral-700',
-                      isWatered: false,
-                    })
-                  }
-                } else {
-                  if (!currentList.some((q) => q.id === otherProfile.id)) {
-                    const friendDiffMs = otherProfile.smoke_free_since
-                      ? Math.max(0, Date.now() - new Date(otherProfile.smoke_free_since).getTime())
-                      : 0
-                    const friendDays = Math.floor(friendDiffMs / (1000 * 60 * 60 * 24))
-
-                    currentList.push({
-                      id: otherProfile.id,
-                      initials,
-                      name: friendName,
-                      status: `${friendDays} días sin fumar`,
-                      avatarBg: 'bg-emerald-100',
-                      avatarText: 'text-emerald-800',
-                      isWatered: false,
-                    })
-                  }
-                }
-              }
-            })
-          }
-
-          setQuittingFriends(currentList)
-          setSupportingFriends(currentSupporters)
-        }
+        await loadFriendsData(user.id)
       } catch (err) {
-        console.error('Error loading friends:', err)
+        console.error('Error initializing friends page:', err)
       } finally {
         setLoading(false)
       }
     }
 
-    loadData()
-  }, [router])
+    init()
+  }, [router, loadFriendsData])
 
-  // Acción interactiva de regar / apoyar
-  const handleToggleWater = async (id: string, name: string, isQuitting: boolean) => {
-    if (isQuitting) {
-      setQuittingFriends((prev) =>
-        prev.map((f) => (f.id === id ? { ...f, isWatered: !f.isWatered } : f))
-      )
-    } else {
-      setSupportingFriends((prev) =>
-        prev.map((f) => (f.id === id ? { ...f, isWatered: !f.isWatered } : f))
-      )
+  // Búsqueda por Nombre en tiempo real
+  useEffect(() => {
+    if (!searchQuery.trim() || !userId) {
+      setSearchResults([])
+      setIsSearching(false)
+      return
     }
 
-    // Registrar en Supabase solo si son UUIDs reales
-    if (userId && isValidUUID(id) && isValidUUID(userId) && id !== userId) {
+    const timer = setTimeout(async () => {
+      setIsSearching(true)
+      try {
+        const query = searchQuery.trim()
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('id, full_name, role, avatar_url, smoke_free_since')
+          .ilike('full_name', `%${query}%`)
+          .neq('id', userId)
+          .limit(10)
+
+        if (error) throw error
+        setSearchResults(data || [])
+      } catch (err) {
+        console.error('Error searching users:', err)
+      } finally {
+        setIsSearching(false)
+      }
+    }, 280)
+
+    return () => clearTimeout(timer)
+  }, [searchQuery, userId])
+
+  // Enviar solicitud de amistad por búsqueda
+  const handleSendFriendRequest = async (targetUser: SearchResultUser) => {
+    if (!userId || !targetUser.id || processingId) return
+    setProcessingId(targetUser.id)
+
+    try {
+      const { data, error } = await supabase
+        .from('friendships')
+        .insert({
+          smoker_id: userId,
+          friend_id: targetUser.id,
+          status: 'pending',
+        })
+        .select()
+        .single()
+
+      if (error) {
+        if (error.code === '23505') {
+          showToast('Ya tienes una conexión o solicitud con este usuario.')
+        } else {
+          throw error
+        }
+      } else {
+        setSentRequestMap((prev) => ({ ...prev, [targetUser.id]: true }))
+        showToast(`¡Solicitud enviada a ${targetUser.full_name || 'tu amigo'}! 🌿`)
+
+        try {
+          confetti({
+            particleCount: 25,
+            spread: 50,
+            origin: { y: 0.65 },
+            colors: ['#10B981', '#34D399', '#6EE7B7'],
+            disableForReducedMotion: true,
+          })
+        } catch {}
+
+        // Recargar datos
+        loadFriendsData(userId)
+      }
+    } catch (err: any) {
+      console.error('Error sending friend request:', err)
+      showToast(err.message || 'No se pudo enviar la solicitud.')
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
+  // Aceptar solicitud de amistad
+  const handleAcceptRequest = async (request: FriendRequestItem) => {
+    if (!userId || processingId) return
+    setProcessingId(request.id)
+
+    try {
+      const { error } = await supabase
+        .from('friendships')
+        .update({ status: 'accepted' })
+        .eq('id', request.id)
+
+      if (error) throw error
+
+      showToast(`¡Ahora estás conectado con ${request.name}! 🤝`)
+
+      try {
+        confetti({
+          particleCount: 40,
+          spread: 70,
+          origin: { y: 0.6 },
+          colors: ['#10B981', '#059669', '#38BDF8'],
+        })
+      } catch {}
+
+      // Actualizar estado local inmediato
+      setPendingReceived((prev) => prev.filter((r) => r.id !== request.id))
+      await loadFriendsData(userId)
+    } catch (err: any) {
+      console.error('Error accepting friend request:', err)
+      showToast(err.message || 'Error al aceptar solicitud.')
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
+  // Rechazar / Cancelar solicitud
+  const handleRejectRequest = async (requestId: string, isReceived: boolean) => {
+    if (!userId || processingId) return
+    setProcessingId(requestId)
+
+    try {
+      const { error } = await supabase
+        .from('friendships')
+        .delete()
+        .eq('id', requestId)
+
+      if (error) throw error
+
+      if (isReceived) {
+        setPendingReceived((prev) => prev.filter((r) => r.id !== requestId))
+        showToast('Solicitud rechazada.')
+      } else {
+        setPendingSent((prev) => prev.filter((r) => r.id !== requestId))
+        showToast('Solicitud cancelada.')
+      }
+    } catch (err: any) {
+      console.error('Error rejecting friend request:', err)
+      showToast(err.message || 'Error al procesar solicitud.')
+    } finally {
+      setProcessingId(null)
+    }
+  }
+
+  // Acción de regar / apoyar
+  const handleToggleWater = async (friend: FriendItem) => {
+    setFriendsList((prev) =>
+      prev.map((f) => (f.id === friend.id ? { ...f, isWatered: !f.isWatered } : f))
+    )
+
+    if (userId && isValidUUID(friend.id) && friend.id !== userId) {
       try {
         await supabase.from('plant_actions').insert({
-          smoker_id: id,
+          smoker_id: friend.id,
           friend_id: userId,
           action_type: 'water',
         })
       } catch {}
     }
 
-    // Confeti sutil
     try {
       confetti({
         particleCount: 25,
@@ -254,8 +484,7 @@ export default function FriendsDashboard() {
       })
     } catch {}
 
-    setToastMessage(`Has enviado apoyo a ${name.split(' ')[0]} 💧`)
-    setTimeout(() => setToastMessage(null), 3000)
+    showToast(`Has regado la planta de ${friend.name.split(' ')[0]} 💧`)
   }
 
   const handleCopyCode = () => {
@@ -266,76 +495,10 @@ export default function FriendsDashboard() {
     }
   }
 
-  // Conectar con un amigo por su código
-  const handleConnectFriend = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!userId || !friendCodeInput.trim()) return
-
-    setIsConnecting(true)
-    setConnectError(null)
-    setConnectSuccess(false)
-
-    try {
-      // Extraer el ID del código (EXHALA-XXXXX donde XXXXX son los primeros 5 chars del UUID)
-      const inputCode = friendCodeInput.trim().toUpperCase()
-
-      if (!inputCode.startsWith('EXHALA-') || inputCode.length < 13) {
-        throw new Error('Código no válido. El formato es EXHALA-XXXXX.')
-      }
-
-      // Buscar el perfil cuyo id comience con ese prefijo
-      const prefix = inputCode.replace('EXHALA-', '').toLowerCase()
-
-      const { data: matchedProfiles, error: searchError } = await supabase
-        .from('profiles')
-        .select('id, full_name, role')
-
-      if (searchError) throw searchError
-
-      const matchedProfile = matchedProfiles?.find(
-        (p) => p.id.toLowerCase().startsWith(prefix)
-      )
-
-      if (!matchedProfile) {
-        throw new Error('No se encontró ningún usuario con ese código.')
-      }
-
-      if (matchedProfile.id === userId) {
-        throw new Error('No puedes añadirte a ti mismo como amigo.')
-      }
-
-      // Crear vínculo de amistad en la tabla friendships
-      const { error: friendshipError } = await supabase
-        .from('friendships')
-        .insert({
-          smoker_id: matchedProfile.id,
-          friend_id: userId,
-        })
-
-      if (friendshipError) {
-        if (friendshipError.code === '23505') {
-          throw new Error('Ya estás conectado con este usuario.')
-        }
-        throw friendshipError
-      }
-
-      setConnectSuccess(true)
-      setFriendCodeInput('')
-      setToastMessage(`¡Conectado con ${matchedProfile.full_name || 'tu amigo'} con éxito! 🎉`)
-      setTimeout(() => {
-        setShowInviteModal(false)
-        setConnectSuccess(false)
-        setToastMessage(null)
-      }, 2500)
-    } catch (err: any) {
-      console.error('Error connecting friend:', err)
-      setConnectError(err.message || 'Error al conectar. Inténtalo de nuevo.')
-    } finally {
-      setIsConnecting(false)
-    }
-  }
-
-  const totalConnections = quittingFriends.length + supportingFriends.length
+  // Separación de listas activas
+  const quittingFriends = friendsList.filter((f) => f.role === 'smoker')
+  const supportingFriends = friendsList.filter((f) => f.role === 'friend')
+  const totalPendingCount = pendingReceived.length
 
   if (loading) {
     return (
@@ -344,7 +507,7 @@ export default function FriendsDashboard() {
           <Users className="w-6 h-6 text-neutral-900" />
         </div>
         <p className="text-xs font-semibold uppercase tracking-widest text-neutral-400">
-          Cargando amigos...
+          Cargando comunidad...
         </p>
       </div>
     )
@@ -352,316 +515,549 @@ export default function FriendsDashboard() {
 
   return (
     <div className="min-h-[100dvh] w-full bg-[#F8FAF9] text-neutral-900 flex flex-col justify-between max-w-md mx-auto relative antialiased select-none pb-24">
+      
       {/* NOTIFICACIÓN TOAST MINIMALISTA */}
       {toastMessage && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-sm bg-neutral-950 text-white text-xs py-3 px-4 rounded-2xl shadow-lg flex items-center gap-2.5 animate-in fade-in slide-in-from-top duration-300">
           <div className="w-4 h-4 rounded-full bg-emerald-400/20 text-emerald-400 flex items-center justify-center shrink-0">
-            <Check className="w-3 h-3" />
+            <Check className="w-3 h-3 stroke-[3]" />
           </div>
           <span className="font-medium leading-tight">{toastMessage}</span>
         </div>
       )}
 
-      {/* CONTENEDOR PRINCIPAL FLOTANTE */}
-      <main className="flex-1 px-5 pt-8 pb-4 flex flex-col">
-        <div className="bg-white border border-neutral-100 rounded-3xl p-6 shadow-sm flex flex-col justify-between flex-1">
-          <div className="space-y-6">
-            
-            {/* CABECERA */}
-            <div className="space-y-0.5">
-              <h1 className="text-2xl font-bold tracking-tight text-neutral-950 font-sans">
-                Amigos
-              </h1>
-              <p className="text-xs text-neutral-400 font-medium">
-                {totalConnections} conexiones
-              </p>
+      {/* CONTENEDOR PRINCIPAL */}
+      <main className="flex-1 px-5 pt-7 pb-4 flex flex-col space-y-4">
+        
+        {/* CABECERA CON BOTÓN RÁPIDO DE BÚSQUEDA */}
+        <div className="flex items-center justify-between">
+          <div className="space-y-0.5">
+            <h1 className="text-2xl font-bold tracking-tight text-neutral-950 font-sans">
+              Comunidad
+            </h1>
+            <p className="text-xs text-neutral-400 font-medium">
+              {friendsList.length} {friendsList.length === 1 ? 'conexión activa' : 'conexiones activas'}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setShowSearchModal(true)
+              setSearchQuery('')
+              setSearchResults([])
+            }}
+            className="flex items-center gap-2 px-3.5 py-2 bg-white border border-neutral-200/90 text-neutral-800 hover:bg-neutral-50 active:scale-95 rounded-2xl text-xs font-semibold shadow-2xs transition-all"
+            aria-label="Buscar amigos por nombre"
+          >
+            <Search className="w-3.5 h-3.5 text-emerald-700 stroke-[2.5]" />
+            <span>Buscar amigo</span>
+          </button>
+        </div>
+
+        {/* PESTAÑAS SEGMENTADAS MÓVILES (AMIGOS VS SOLICITUDES) */}
+        <div className="flex bg-neutral-200/60 p-1 rounded-2xl gap-1">
+          <button
+            type="button"
+            onClick={() => setCurrentTab('friends')}
+            className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+              currentTab === 'friends'
+                ? 'bg-white shadow-xs text-neutral-950'
+                : 'text-neutral-500 hover:text-neutral-800'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>Mis Amigos ({friendsList.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setCurrentTab('requests')}
+            className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 relative ${
+              currentTab === 'requests'
+                ? 'bg-white shadow-xs text-neutral-950'
+                : 'text-neutral-500 hover:text-neutral-800'
+            }`}
+          >
+            <UserPlus className="w-3.5 h-3.5" />
+            <span>Solicitudes</span>
+            {totalPendingCount > 0 && (
+              <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
+                {totalPendingCount}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* ======================================================== */}
+        {/* PESTAÑA 1: LISTADO DE AMIGOS ACTIVOS */}
+        {/* ======================================================== */}
+        {currentTab === 'friends' && (
+          <div className="bg-white border border-neutral-100 rounded-3xl p-5 shadow-xs flex-1 flex flex-col justify-between space-y-6">
+            <div className="space-y-6">
+              
+              {/* SECCIÓN 1: DEJANDO DE FUMAR */}
+              <section className="space-y-3">
+                <div className="border-b border-neutral-100 pb-2 flex items-center justify-between">
+                  <h2 className="text-xs font-bold text-emerald-900 uppercase tracking-wider">
+                    Dejando de fumar ({quittingFriends.length})
+                  </h2>
+                  <span className="text-[10px] text-neutral-400 font-medium">
+                    Toca para chatear
+                  </span>
+                </div>
+
+                {quittingFriends.length === 0 ? (
+                  <div className="text-center py-6 space-y-2">
+                    <p className="text-xs text-neutral-400">No tienes amigos en proceso aún.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3.5 pt-1">
+                    {quittingFriends.map((friend) => (
+                      <div
+                        key={friend.id}
+                        className="flex items-center justify-between group py-1 bg-neutral-50/50 hover:bg-neutral-50 rounded-2xl px-2.5 transition-colors"
+                      >
+                        <div
+                          onClick={() => setActiveChatFriend(friend)}
+                          className="flex items-center gap-3 flex-1 cursor-pointer min-w-0"
+                        >
+                          {/* Avatar con iniciales */}
+                          <div className="relative shrink-0">
+                            <div
+                              className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold tracking-wider ${friend.avatarBg} ${friend.avatarText}`}
+                            >
+                              {friend.initials}
+                            </div>
+                            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full" />
+                          </div>
+
+                          {/* Nombre y Estado */}
+                          <div className="flex flex-col min-w-0">
+                            <span className="text-sm font-semibold text-neutral-950 leading-tight truncate">
+                              {friend.name}
+                            </span>
+                            <span className="text-[11px] text-neutral-400 font-normal mt-0.5 truncate">
+                              {friend.status}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Botones de acción directos */}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {/* Botón de Chat */}
+                          <button
+                            type="button"
+                            onClick={() => setActiveChatFriend(friend)}
+                            className="w-8 h-8 rounded-full bg-white border border-neutral-200 text-neutral-600 hover:text-emerald-700 hover:border-emerald-300 flex items-center justify-center transition-all active:scale-90"
+                            title={`Chatear con ${friend.name}`}
+                          >
+                            <MessageCircle className="w-3.5 h-3.5 stroke-[2.2]" />
+                          </button>
+
+                          {/* Botón de Riego */}
+                          <button
+                            type="button"
+                            onClick={() => handleToggleWater(friend)}
+                            className="w-8 h-8 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-700 hover:bg-emerald-100 flex items-center justify-center transition-all active:scale-90"
+                            title={`Regar planta de ${friend.name}`}
+                          >
+                            <Droplets className="w-3.5 h-3.5 fill-emerald-600/20 stroke-[2.2]" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              {/* SECCIÓN 2: GUARDIANES (APOYANDO) */}
+              <section className="space-y-3 pt-1">
+                <div className="border-b border-neutral-100 pb-2 flex items-center justify-between">
+                  <h2 className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
+                    Guardianes de apoyo ({supportingFriends.length})
+                  </h2>
+                </div>
+
+                {supportingFriends.length === 0 ? (
+                  <div className="text-center py-4 space-y-1">
+                    <p className="text-xs text-neutral-400">Sin guardianes por ahora.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3.5 pt-1">
+                    {supportingFriends.map((supporter) => (
+                      <div
+                        key={supporter.id}
+                        className="flex items-center justify-between group py-1 bg-neutral-50/50 hover:bg-neutral-50 rounded-2xl px-2.5 transition-colors"
+                      >
+                        <div
+                          onClick={() => setActiveChatFriend(supporter)}
+                          className="flex items-center gap-3 flex-1 cursor-pointer min-w-0"
+                        >
+                          <div
+                            className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold tracking-wider ${supporter.avatarBg} ${supporter.avatarText} shrink-0`}
+                          >
+                            {supporter.initials}
+                          </div>
+
+                          <div className="flex flex-col min-w-0">
+                            <span className="text-sm font-semibold text-neutral-950 leading-tight truncate">
+                              {supporter.name}
+                            </span>
+                            <span className="text-[11px] text-neutral-400 font-normal mt-0.5 truncate">
+                              {supporter.status}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setActiveChatFriend(supporter)}
+                            className="w-8 h-8 rounded-full bg-white border border-neutral-200 text-neutral-600 hover:text-sky-700 hover:border-sky-300 flex items-center justify-center transition-all active:scale-90"
+                            title={`Chatear con ${supporter.name}`}
+                          >
+                            <MessageCircle className="w-3.5 h-3.5 stroke-[2.2]" />
+                          </button>
+
+                          <span className="text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/70 px-2.5 py-0.5 rounded-full">
+                            Guardián
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
             </div>
 
-            {/* SECCIÓN: DEJANDO DE FUMAR */}
+            {/* BOTÓN INFERIOR: BUSCAR NUEVOS AMIGOS */}
+            <div className="pt-4 border-t border-neutral-100">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSearchModal(true)
+                  setSearchQuery('')
+                  setSearchResults([])
+                }}
+                className="w-full h-12 bg-neutral-950 hover:bg-neutral-900 text-white font-medium text-xs rounded-2xl flex items-center justify-center gap-2 transition-transform active:scale-[0.98] shadow-xs"
+              >
+                <UserPlus className="w-4 h-4 text-emerald-400" />
+                <span>Buscar y añadir amigos por nombre</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* PESTAÑA 2: SOLICITUDES DE AMISTAD (RECIBIDAS Y ENVIADAS) */}
+        {/* ======================================================== */}
+        {currentTab === 'requests' && (
+          <div className="bg-white border border-neutral-100 rounded-3xl p-5 shadow-xs flex-1 flex flex-col space-y-6">
+            
+            {/* SOLICITUDES RECIBIDAS */}
             <section className="space-y-3">
-              <div className="border-b border-neutral-100 pb-2">
-                <h2 className="text-xs font-bold text-emerald-900 uppercase tracking-wider">
-                  Dejando de fumar
+              <div className="border-b border-neutral-100 pb-2 flex items-center justify-between">
+                <h2 className="text-xs font-bold text-neutral-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <span>Solicitudes pendientes</span>
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
                 </h2>
+                <span className="text-xs text-neutral-400 font-semibold">
+                  {pendingReceived.length}
+                </span>
               </div>
 
-              <div className="space-y-4 pt-1">
-                {quittingFriends.map((friend) => (
-                  <div
-                    key={friend.id}
-                    className="flex items-center justify-between group py-1"
-                  >
-                    <div
-                      onClick={() => setActiveChatFriend(friend)}
-                      className="flex items-center gap-3.5 flex-1 cursor-pointer"
-                    >
-                      {/* Avatar circular con iniciales */}
-                      <div
-                        className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold tracking-wider ${friend.avatarBg} ${friend.avatarText} shrink-0`}
-                      >
-                        {friend.initials}
-                      </div>
-
-                      {/* Nombre y estado */}
-                      <div className="flex flex-col">
-                        <span className="text-sm font-semibold text-neutral-900 leading-tight flex items-center gap-1.5">
-                          {friend.name}
-                        </span>
-                        <span className="text-xs text-neutral-400 font-normal mt-0.5">
-                          {friend.status}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Botones de acción a la derecha */}
-                    <div className="flex items-center gap-1">
-                      {/* Botón de Chat */}
-                      <button
-                        type="button"
-                        onClick={() => setActiveChatFriend(friend)}
-                        className="w-8 h-8 rounded-full flex items-center justify-center text-neutral-500 hover:text-emerald-700 hover:bg-emerald-50 active:scale-90 transition-all"
-                        title={`Chatear con ${friend.name}`}
-                        aria-label={`Abrir chat con ${friend.name}`}
-                      >
-                        <MessageCircle className="w-4 h-4 stroke-[2]" />
-                      </button>
-
-                      {/* Icono de check/gota interactivo */}
-                      <button
-                        type="button"
-                        onClick={() => handleToggleWater(friend.id, friend.name, true)}
-                        className="w-8 h-8 rounded-full flex items-center justify-center text-emerald-600 hover:bg-emerald-50 active:scale-90 transition-all"
-                        title="Enviar apoyo / riego"
-                      >
-                        <Droplets className="w-4 h-4 fill-emerald-600/20 stroke-[2.2]" />
-                      </button>
-                    </div>
+              {pendingReceived.length === 0 ? (
+                <div className="text-center py-8 space-y-2.5">
+                  <div className="w-12 h-12 rounded-2xl bg-neutral-50 border border-neutral-100 flex items-center justify-center mx-auto text-neutral-400">
+                    <HeartHandshake className="w-6 h-6 stroke-[1.5]" />
                   </div>
-                ))}
-              </div>
+                  <p className="text-xs text-neutral-500 font-medium">
+                    No tienes solicitudes pendientes en este momento.
+                  </p>
+                  <p className="text-[11px] text-neutral-400 max-w-[220px] mx-auto leading-relaxed">
+                    Usa la búsqueda por nombre para encontrar y conectar con tus amigos.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3 pt-1">
+                  {pendingReceived.map((req) => (
+                    <div
+                      key={req.id}
+                      className="bg-[#F8FAF9] border border-neutral-200/80 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in duration-200"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`w-11 h-11 rounded-full flex items-center justify-center text-xs font-bold ${req.avatarBg} ${req.avatarText} shrink-0 shadow-2xs`}
+                        >
+                          {req.initials}
+                        </div>
+
+                        <div className="flex flex-col">
+                          <span className="text-sm font-bold text-neutral-950">
+                            {req.name}
+                          </span>
+                          <span className="text-[11px] text-neutral-500">
+                            Quiere unirse a tu círculo de apoyo
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* BOTONES TÁCTILES GRANDES: ACEPTAR Y RECHAZAR */}
+                      <div className="flex items-center gap-2 self-end sm:self-center w-full sm:w-auto">
+                        <button
+                          type="button"
+                          onClick={() => handleAcceptRequest(req)}
+                          disabled={processingId === req.id}
+                          className="flex-1 sm:flex-initial h-10 px-4 bg-neutral-950 hover:bg-neutral-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-transform active:scale-95 shadow-xs"
+                        >
+                          {processingId === req.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <>
+                              <Check className="w-3.5 h-3.5 stroke-[3] text-emerald-400" />
+                              <span>Aceptar</span>
+                            </>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleRejectRequest(req.id, true)}
+                          disabled={processingId === req.id}
+                          className="h-10 px-3.5 bg-white border border-neutral-200 text-neutral-600 hover:text-red-700 hover:border-red-200 rounded-xl text-xs font-semibold flex items-center justify-center transition-colors active:scale-95"
+                          title="Rechazar solicitud"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
 
-            {/* SECCIÓN: APOYANDO */}
-            <section className="space-y-3 pt-2">
-              <div className="border-b border-neutral-100 pb-2">
-                <h2 className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
-                  Apoyando
-                </h2>
-              </div>
+            {/* SOLICITUDES ENVIADAS (ESPERANDO RESPUESTA) */}
+            {pendingSent.length > 0 && (
+              <section className="space-y-3 pt-2">
+                <div className="border-b border-neutral-100 pb-2 flex items-center justify-between">
+                  <h2 className="text-xs font-bold text-neutral-400 uppercase tracking-wider">
+                    Enviadas por ti ({pendingSent.length})
+                  </h2>
+                </div>
 
-              <div className="space-y-4 pt-1">
-                {supportingFriends.map((supporter) => (
-                  <div
-                    key={supporter.id}
-                    className="flex items-center justify-between group py-1"
-                  >
+                <div className="space-y-2.5">
+                  {pendingSent.map((sentReq) => (
                     <div
-                      onClick={() => setActiveChatFriend(supporter)}
-                      className="flex items-center gap-3.5 flex-1 cursor-pointer"
+                      key={sentReq.id}
+                      className="flex items-center justify-between p-3 rounded-2xl bg-neutral-50/70 border border-neutral-100"
                     >
-                      {/* Avatar circular */}
-                      <div
-                        className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold tracking-wider ${supporter.avatarBg} ${supporter.avatarText} shrink-0`}
-                      >
-                        {supporter.initials}
+                      <div className="flex items-center gap-3">
+                        <div
+                          className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold ${sentReq.avatarBg} ${sentReq.avatarText}`}
+                        >
+                          {sentReq.initials}
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-semibold text-neutral-800">
+                            {sentReq.name}
+                          </span>
+                          <span className="text-[10px] text-amber-700 font-medium flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            Esperando confirmación
+                          </span>
+                        </div>
                       </div>
 
-                      {/* Nombre y estado */}
-                      <div className="flex flex-col">
-                        <span className="text-sm font-semibold text-neutral-900 leading-tight">
-                          {supporter.name}
-                        </span>
-                        <span className="text-xs text-neutral-400 font-normal mt-0.5">
-                          {supporter.status}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Acciones de Guardianes: botón de chat + etiqueta de rol */}
-                    <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => setActiveChatFriend(supporter)}
-                        className="w-8 h-8 rounded-full flex items-center justify-center text-neutral-500 hover:text-sky-700 hover:bg-sky-50 active:scale-90 transition-all"
-                        title={`Chatear con ${supporter.name}`}
-                        aria-label={`Abrir chat con ${supporter.name}`}
+                        onClick={() => handleRejectRequest(sentReq.id, false)}
+                        className="text-[11px] text-neutral-400 hover:text-neutral-700 font-medium px-2.5 py-1 rounded-lg hover:bg-neutral-100"
                       >
-                        <MessageCircle className="w-4 h-4 stroke-[2]" />
+                        Cancelar
                       </button>
-
-                      <span className="text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/60 px-2 py-0.5 rounded-full">
-                        Guardián
-                      </span>
                     </div>
-                  </div>
-                ))}
-              </div>
-            </section>
+                  ))}
+                </div>
+              </section>
+            )}
           </div>
-
-          {/* BOTÓN DE ACCIÓN: INVITAR A UN AMIGO */}
-          <div className="pt-6 mt-auto">
-            <button
-              type="button"
-              onClick={() => setShowInviteModal(true)}
-              className="w-full h-12 bg-neutral-950 hover:bg-neutral-900 text-white font-medium text-sm rounded-2xl flex items-center justify-center gap-2 transition-transform active:scale-[0.98] shadow-xs"
-            >
-              <span>Invitar a un amigo</span>
-            </button>
-          </div>
-        </div>
+        )}
       </main>
 
-      {/* MODAL PARA INVITAR AMIGO — DOS PESTAÑAS */}
-      {showInviteModal && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-end sm:items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-sm bg-white rounded-3xl p-6 space-y-4 animate-in slide-in-from-bottom duration-300">
+      {/* ======================================================== */}
+      {/* MODAL DE BÚSQUEDA POR NOMBRE DE USUARIO */}
+      {/* ======================================================== */}
+      {showSearchModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-white sm:rounded-3xl rounded-t-3xl h-[85dvh] sm:h-[580px] flex flex-col p-6 space-y-4 shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-300 border border-neutral-200/80">
+            
             {/* Cabecera del modal */}
             <div className="flex justify-between items-start">
               <div>
-                <h3 className="text-base font-semibold text-neutral-950">
-                  Conectar Amigos
+                <h3 className="text-base font-bold text-neutral-950">
+                  Buscar Amigos
                 </h3>
                 <p className="text-xs text-neutral-500 mt-0.5">
-                  Comparte tu código o únete con el de un amigo.
+                  Escribe el nombre o apodo de tu amigo para conectar.
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setShowInviteModal(false)
-                  setConnectError(null)
-                  setConnectSuccess(false)
-                  setFriendCodeInput('')
-                }}
-                className="w-7 h-7 rounded-full bg-neutral-100 flex items-center justify-center text-neutral-400 hover:text-neutral-700"
+                onClick={() => setShowSearchModal(false)}
+                className="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center text-neutral-400 hover:text-neutral-700 transition-colors active:scale-95"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Pestañas */}
-            <div className="flex bg-neutral-100 rounded-2xl p-1">
-              <button
-                type="button"
-                onClick={() => { setInviteTab('share'); setConnectError(null); setConnectSuccess(false) }}
-                className={`flex-1 py-2 text-xs font-semibold rounded-xl transition-all ${
-                  inviteTab === 'share'
-                    ? 'bg-white shadow-xs text-neutral-950'
-                    : 'text-neutral-500 hover:text-neutral-800'
-                }`}
-              >
-                Mi Código
-              </button>
-              <button
-                type="button"
-                onClick={() => { setInviteTab('join'); setConnectError(null); setConnectSuccess(false) }}
-                className={`flex-1 py-2 text-xs font-semibold rounded-xl transition-all ${
-                  inviteTab === 'join'
-                    ? 'bg-white shadow-xs text-neutral-950'
-                    : 'text-neutral-500 hover:text-neutral-800'
-                }`}
-              >
-                Unirme con Código
-              </button>
+            {/* Input de Búsqueda Directa */}
+            <div className="relative">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Ej. Uri, María, David..."
+                autoFocus
+                className="w-full h-12 pl-11 pr-10 bg-[#F8FAF9] border border-neutral-200 rounded-2xl text-sm text-neutral-950 placeholder:text-neutral-400 focus:outline-none focus:border-emerald-700 transition-colors shadow-2xs font-medium"
+              />
+              <Search className="w-4 h-4 text-neutral-400 absolute left-4 top-1/2 -translate-y-1/2" />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="w-6 h-6 rounded-full bg-neutral-200/70 text-neutral-600 flex items-center justify-center absolute right-3.5 top-1/2 -translate-y-1/2 hover:bg-neutral-300"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
             </div>
 
-            {/* Pestaña 1: Compartir mi código */}
-            {inviteTab === 'share' && (
-              <div className="space-y-3">
-                <p className="text-xs text-neutral-500 leading-relaxed">
-                  Comparte este código con tus amigos para que se unan a tu círculo de apoyo.
-                </p>
-
-                <div className="flex items-center justify-between bg-neutral-50 border border-neutral-200/80 rounded-2xl p-3">
-                  <span className="font-mono text-sm font-bold tracking-wider text-neutral-950 px-1">
-                    {squadCode || 'EXHALA-SQUAD'}
-                  </span>
-
-                  <button
-                    type="button"
-                    onClick={handleCopyCode}
-                    className="px-3.5 py-1.5 bg-neutral-950 hover:bg-neutral-900 text-white rounded-xl text-xs font-medium flex items-center gap-1.5 transition-all active:scale-95"
-                  >
-                    {copiedCode ? (
-                      <>
-                        <CheckCheck className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Copiado</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copiar</span>
-                      </>
-                    )}
-                  </button>
+            {/* Lista de Resultados de Búsqueda */}
+            <div className="flex-1 overflow-y-auto space-y-2.5 pr-0.5">
+              {isSearching ? (
+                <div className="flex flex-col items-center justify-center py-12 space-y-2">
+                  <Loader2 className="w-6 h-6 text-emerald-600 animate-spin" />
+                  <p className="text-xs text-neutral-400">Buscando usuarios...</p>
                 </div>
+              ) : !searchQuery.trim() ? (
+                <div className="text-center py-12 space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center mx-auto">
+                    <Search className="w-6 h-6" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold text-neutral-800">
+                      Encuentra a tus amigos fácilmente
+                    </p>
+                    <p className="text-[11px] text-neutral-400 max-w-xs mx-auto leading-relaxed">
+                      Escribe al menos dos letras del nombre de tu amigo para ver sugerencias y enviar una invitación directa.
+                    </p>
+                  </div>
+                </div>
+              ) : searchResults.length === 0 ? (
+                <div className="text-center py-10 space-y-2">
+                  <p className="text-xs font-semibold text-neutral-700">
+                    No se encontraron usuarios con &quot;{searchQuery}&quot;
+                  </p>
+                  <p className="text-[11px] text-neutral-400">
+                    Comprueba que el nombre esté bien escrito o invita a tu amigo a registrarse.
+                  </p>
+                </div>
+              ) : (
+                searchResults.map((userItem) => {
+                  const name = userItem.full_name || 'Usuario Exhala'
+                  const initials = getInitials(name)
+                  const color = getAvatarColor(name)
+                  const isAlreadyFriend = friendsList.some((f) => f.id === userItem.id)
+                  const isSent = sentRequestMap[userItem.id] || pendingSent.some((s) => s.requesterId === userItem.id)
+                  const isProcessing = processingId === userItem.id
+
+                  return (
+                    <div
+                      key={userItem.id}
+                      className="p-3 bg-[#F8FAF9] hover:bg-neutral-100/70 border border-neutral-200/70 rounded-2xl flex items-center justify-between gap-3 transition-colors"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div
+                          className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold ${color.bg} ${color.text} shrink-0`}
+                        >
+                          {initials}
+                        </div>
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-sm font-bold text-neutral-950 truncate">
+                            {name}
+                          </span>
+                          <span className="text-[11px] text-neutral-400 truncate">
+                            {userItem.role === 'friend' ? 'Guardián' : 'Fumador en proceso'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Botón de acción */}
+                      <div className="shrink-0">
+                        {isAlreadyFriend ? (
+                          <span className="px-3 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-bold flex items-center gap-1">
+                            <Check className="w-3 h-3 stroke-[3]" />
+                            Amigo
+                          </span>
+                        ) : isSent ? (
+                          <span className="px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-semibold flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            Enviada
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleSendFriendRequest(userItem)}
+                            disabled={isProcessing}
+                            className="px-4 py-2 bg-neutral-950 hover:bg-neutral-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-transform active:scale-95 shadow-xs"
+                          >
+                            {isProcessing ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <>
+                                <UserPlus className="w-3.5 h-3.5 text-emerald-400" />
+                                <span>Añadir</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+
+            {/* Código de escuadrón personal secundario (por si quieren compartir su enlace) */}
+            <div className="pt-3 border-t border-neutral-100 flex items-center justify-between bg-neutral-50 px-3.5 py-2.5 rounded-2xl text-xs">
+              <div className="flex flex-col">
+                <span className="text-[10px] text-neutral-400 font-semibold uppercase tracking-wider">
+                  Tu código personal
+                </span>
+                <span className="font-mono text-xs font-bold text-neutral-900">
+                  {squadCode || 'EXHALA'}
+                </span>
               </div>
-            )}
 
-            {/* Pestaña 2: Unirme con el código de un amigo */}
-            {inviteTab === 'join' && (
-              <form onSubmit={handleConnectFriend} className="space-y-3">
-                <p className="text-xs text-neutral-500 leading-relaxed">
-                  Introduce el código de invitación de tu amigo para agregarlo a tu red.
-                </p>
-
-                <input
-                  type="text"
-                  value={friendCodeInput}
-                  onChange={(e) => {
-                    setFriendCodeInput(e.target.value.toUpperCase())
-                    setConnectError(null)
-                    setConnectSuccess(false)
-                  }}
-                  placeholder="EXHALA-XXXXX"
-                  maxLength={12}
-                  className="w-full h-11 px-4 bg-neutral-50 border border-neutral-200 rounded-2xl text-sm font-mono text-neutral-950 placeholder:text-neutral-400 focus:outline-none focus:border-neutral-950 transition-colors"
-                />
-
-                {connectError && (
-                  <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">
-                    {connectError}
-                  </p>
+              <button
+                type="button"
+                onClick={handleCopyCode}
+                className="px-3 py-1.5 bg-white border border-neutral-200 text-neutral-700 hover:bg-neutral-100 rounded-xl text-xs font-semibold flex items-center gap-1.5 active:scale-95 transition-all"
+              >
+                {copiedCode ? (
+                  <>
+                    <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Copiado</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copiar</span>
+                  </>
                 )}
-
-                {connectSuccess && (
-                  <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 flex items-center gap-1.5">
-                    <Check className="w-3.5 h-3.5 stroke-[3] shrink-0" />
-                    ¡Conexión establecida con éxito!
-                  </p>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={isConnecting || !friendCodeInput.trim()}
-                  className="w-full h-11 bg-neutral-950 hover:bg-neutral-900 text-white font-medium text-xs rounded-2xl flex items-center justify-center gap-2 transition-all active:scale-[0.98] disabled:opacity-50"
-                >
-                  {isConnecting ? (
-                    <>
-                      <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      <span>Conectando...</span>
-                    </>
-                  ) : (
-                    <span>Conectar con amigo</span>
-                  )}
-                </button>
-              </form>
-            )}
-
-            {/* Botón cerrar secundario */}
-            <button
-              type="button"
-              onClick={() => {
-                setShowInviteModal(false)
-                setConnectError(null)
-                setConnectSuccess(false)
-                setFriendCodeInput('')
-              }}
-              className="w-full h-10 text-neutral-400 hover:text-neutral-700 font-medium text-xs transition-colors"
-            >
-              Cancelar
-            </button>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -671,7 +1067,7 @@ export default function FriendsDashboard() {
         <FriendChatModal
           friend={activeChatFriend}
           currentUserId={userId}
-          currentUserName={profile?.full_name || 'Tú'}
+          currentUserName={userProfile?.full_name || 'Tú'}
           onClose={() => setActiveChatFriend(null)}
         />
       )}

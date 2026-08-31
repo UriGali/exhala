@@ -64,18 +64,21 @@ export interface Database {
           id: string
           smoker_id: string
           friend_id: string
+          status: 'pending' | 'accepted' | 'rejected'
           created_at: string
         }
         Insert: {
           id?: string
           smoker_id: string
           friend_id: string
+          status?: 'pending' | 'accepted' | 'rejected'
           created_at?: string
         }
         Update: {
           id?: string
           smoker_id?: string
           friend_id?: string
+          status?: 'pending' | 'accepted' | 'rejected'
           created_at?: string
         }
         Relationships: [
