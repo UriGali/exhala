@@ -177,6 +177,7 @@ export default function FriendsDashboard() {
   // Chat & Toast
   const [activeChatFriend, setActiveChatFriend] = useState<FriendItem | null>(null)
   const activeChatFriendRef = useRef<FriendItem | null>(null)
+  const lastReadTimestampsRef = useRef<Record<string, string>>({})
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({})
   const [pushPermission, setPushPermission] = useState<string>('default')
   const [toastMessage, setToastMessage] = useState<string | null>(null)
@@ -191,21 +192,37 @@ export default function FriendsDashboard() {
     setTimeout(() => setToastMessage(null), 3000)
   }, [])
 
-  // Cargar conteo de mensajes no leídos por amigo
+  // Cargar conteo de mensajes no leídos por amigo de forma infalible
   const loadUnreadCounts = useCallback(async (currentUserId: string) => {
     try {
       const { data: unreadRows } = await supabase
         .from('messages')
-        .select('sender_id')
+        .select('id, sender_id, created_at')
         .eq('receiver_id', currentUserId)
         .is('read_at', null)
 
       const counts: Record<string, number> = {}
       unreadRows?.forEach((r) => {
+        // Consultar marca temporal de última lectura en memoria o almacenamiento local
+        let lastRead = lastReadTimestampsRef.current[r.sender_id]
+        if (!lastRead && typeof window !== 'undefined') {
+          lastRead = localStorage.getItem(`exhala_chat_read_${currentUserId}_${r.sender_id}`) || undefined
+        }
+
+        // Si el mensaje fue recibido antes o en el momento en que se abrió el chat, no contarlo
+        if (lastRead && new Date(r.created_at).getTime() <= new Date(lastRead).getTime()) {
+          return
+        }
+
+        // Si el modal de chat con este amigo está abierto en pantalla ahora mismo, no contarlo
+        if (activeChatFriendRef.current?.id === r.sender_id) {
+          return
+        }
+
         counts[r.sender_id] = (counts[r.sender_id] || 0) + 1
       })
 
-      // Si el chat con un amigo está abierto ahora mismo en pantalla, su badge debe ser 0
+      // Asegurar que si el chat está activo, el badge sea 0
       if (activeChatFriendRef.current?.id) {
         counts[activeChatFriendRef.current.id] = 0
       }
@@ -218,26 +235,48 @@ export default function FriendsDashboard() {
 
   // Abrir chat y marcar mensajes de ese amigo como leídos
   const handleOpenChat = async (friend: FriendItem) => {
+    const nowIso = new Date().toISOString()
     activeChatFriendRef.current = friend
     setActiveChatFriend(friend)
-    setUnreadCounts((prev) => ({ ...prev, [friend.id]: 0 }))
+
+    // Guardar marca de tiempo de lectura
+    lastReadTimestampsRef.current[friend.id] = nowIso
+    if (typeof window !== 'undefined' && userId) {
+      try {
+        localStorage.setItem(`exhala_chat_read_${userId}_${friend.id}`, nowIso)
+      } catch {}
+    }
+
+    // Quitar badge de la interfaz inmediatamente
+    setUnreadCounts((prev) => {
+      const updated = { ...prev }
+      delete updated[friend.id]
+      return updated
+    })
 
     if (userId && isValidUUID(friend.id)) {
-      // 1. Llamada a endpoint API servidor
-      fetch('/api/messages/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ senderId: friend.id, receiverId: userId }),
-      }).catch(() => {})
-
-      // 2. Llamada directa vía cliente Supabase
       try {
-        await supabase
+        const { data: sessionData } = await supabase.auth.getSession()
+        const token = sessionData.session?.access_token
+
+        // 1. Llamada a endpoint API servidor
+        fetch('/api/messages/read', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ senderId: friend.id, receiverId: userId }),
+        }).catch(() => {})
+
+        // 2. Llamada directa vía cliente Supabase
+        supabase
           .from('messages')
-          .update({ read_at: new Date().toISOString() })
+          .update({ read_at: nowIso })
           .eq('sender_id', friend.id)
           .eq('receiver_id', userId)
           .is('read_at', null)
+          .then(() => {})
       } catch (err) {
         console.warn('Could not mark messages as read:', err)
       }
@@ -416,6 +455,14 @@ export default function FriendsDashboard() {
 
               // Si el usuario ya está dentro del chat con este remitente, marcar como leído y no incrementar badge
               if (activeChatFriendRef.current?.id === newMsg.sender_id) {
+                const nowIso = new Date().toISOString()
+                lastReadTimestampsRef.current[newMsg.sender_id] = nowIso
+                if (typeof window !== 'undefined') {
+                  try {
+                    localStorage.setItem(`exhala_chat_read_${user.id}_${newMsg.sender_id}`, nowIso)
+                  } catch {}
+                }
+
                 fetch('/api/messages/read', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },

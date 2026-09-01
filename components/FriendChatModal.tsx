@@ -72,20 +72,33 @@ export default function FriendChatModal({
     const sortedIds = [currentUserId, friend.id].sort()
     const channelName = `chat-room-${sortedIds[0]}-${sortedIds[1]}`
 
-    // Marcar como leído de forma infalible (vía API backend y cliente Supabase)
+    // Marcar como leído de forma infalible (vía API backend, token y cliente Supabase)
     const markMessagesAsRead = async () => {
       if (!friend.id || !currentUserId) return
+      const nowIso = new Date().toISOString()
       try {
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(`exhala_chat_read_${currentUserId}_${friend.id}`, nowIso)
+        }
+      } catch {}
+
+      try {
+        const { data: sessionData } = await supabase.auth.getSession()
+        const token = sessionData.session?.access_token
+
         fetch('/api/messages/read', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           body: JSON.stringify({ senderId: friend.id, receiverId: currentUserId }),
         }).catch(() => {})
 
         if (isValidUUID(friend.id) && isValidUUID(currentUserId)) {
           supabase
             .from('messages')
-            .update({ read_at: new Date().toISOString() })
+            .update({ read_at: nowIso })
             .eq('sender_id', friend.id)
             .eq('receiver_id', currentUserId)
             .is('read_at', null)
