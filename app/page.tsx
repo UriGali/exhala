@@ -83,9 +83,14 @@ export default function OnboardingLoginPage() {
           // Consultar el rol del usuario en la base de datos
           const { data: profile } = await supabase
             .from('profiles')
-            .select('role')
+            .select('role, full_name')
             .eq('id', data.user.id)
-            .maybeSingle<{ role: UserRole }>()
+            .maybeSingle<{ role: UserRole; full_name: string | null }>()
+
+          if (!profile?.full_name) {
+            router.push('/onboarding')
+            return
+          }
 
           const userRole: UserRole =
             profile?.role ||
@@ -120,9 +125,8 @@ export default function OnboardingLoginPage() {
         }
 
         if (data.session && data.user) {
-          // Si el registro devuelve sesión activa directamente
-          const destination = currentRole === 'friend' ? '/dashboard/friends' : '/onboarding'
-          router.push(destination)
+          // Todo nuevo usuario (sea fumador o guardián) va a onboarding a poner su nombre
+          router.push('/onboarding')
         } else if (data.user) {
           // Si Supabase requiere confirmación de email
           setMessage({

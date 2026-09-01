@@ -1239,7 +1239,10 @@ export default function FriendsDashboard() {
           friend={activeChatFriend}
           currentUserId={userId}
           currentUserName={userProfile?.full_name || 'Tú'}
-          onClose={() => setActiveChatFriend(null)}
+          onClose={() => {
+            setActiveChatFriend(null)
+            if (userId) loadUnreadCounts(userId)
+          }}
         />
       )}
 
@@ -1247,6 +1250,7 @@ export default function FriendsDashboard() {
       <BottomNav
         currentTab="friends"
         unreadFriendsCount={Object.values(unreadCounts).reduce((a, b) => a + b, 0)}
+        userRole={userProfile?.role || 'smoker'}
       />
     </div>
   )

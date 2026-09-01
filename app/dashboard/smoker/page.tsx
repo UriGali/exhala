@@ -359,6 +359,11 @@ export default function SmokerDashboard() {
       }
 
       if (userProfile) {
+        if (userProfile.role === 'friend') {
+          router.push('/dashboard/friends')
+          return
+        }
+
         if (!userProfile.smoke_free_since) {
           router.push('/onboarding')
           return

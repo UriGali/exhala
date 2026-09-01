@@ -87,6 +87,11 @@ export default function AchievementsDashboard() {
           .maybeSingle()
 
         if (userProfile) {
+          if (userProfile.role === 'friend') {
+            router.push('/dashboard/friends')
+            return
+          }
+
           setProfile(userProfile)
 
           const { count: relapses } = await supabase

@@ -125,6 +125,16 @@ export default function FriendChatModal({
           setTimeout(scrollToBottom, 100)
         }
 
+        // Marcar todos los mensajes entrantes de este amigo como leídos inmediatamente
+        if (isValidUUID(friend.id) && isValidUUID(currentUserId)) {
+          await supabase
+            .from('messages')
+            .update({ read_at: new Date().toISOString() })
+            .eq('sender_id', friend.id)
+            .eq('receiver_id', currentUserId)
+            .is('read_at', null)
+        }
+
         if (!isMounted) return
 
         // 3. Setup Shared Realtime Channel with Broadcast + Postgres Changes
@@ -141,6 +151,14 @@ export default function FriendChatModal({
               if (prev.some((m) => m.id === payload.id)) return prev
               return [...prev, payload]
             })
+            // Marcar como leído
+            if (payload.sender_id === friend.id && isValidUUID(currentUserId)) {
+              supabase
+                .from('messages')
+                .update({ read_at: new Date().toISOString() })
+                .eq('id', payload.id)
+                .then(() => {})
+            }
             setTimeout(scrollToBottom, 60)
           })
           .on(
@@ -161,6 +179,14 @@ export default function FriendChatModal({
                   if (prev.some((m) => m.id === newMsg.id)) return prev
                   return [...prev, newMsg]
                 })
+                // Marcar como leído
+                if (newMsg.sender_id === friend.id && isValidUUID(currentUserId)) {
+                  supabase
+                    .from('messages')
+                    .update({ read_at: new Date().toISOString() })
+                    .eq('id', newMsg.id)
+                    .then(() => {})
+                }
                 setTimeout(scrollToBottom, 60)
               }
             }

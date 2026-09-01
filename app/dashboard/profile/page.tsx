@@ -325,11 +325,11 @@ export default function ProfilePage() {
           )}
         </section>
 
-        {/* FORMULARIO DE AJUSTES DEL HÁBITO */}
+        {/* FORMULARIO DE AJUSTES DEL PERFIL */}
         <section className="bg-white border border-neutral-200/80 rounded-3xl p-5 space-y-4 shadow-xs">
           <div className="flex items-center justify-between pb-2 border-b border-neutral-100">
             <span className="text-xs font-semibold uppercase tracking-widest text-neutral-400">
-              Datos de Consumo & Ahorro
+              {profile?.role === 'friend' ? 'Datos del Guardián' : 'Datos de Consumo & Ahorro'}
             </span>
             <Sparkles className="w-4 h-4 text-emerald-600" />
           </div>
@@ -345,86 +345,91 @@ export default function ProfilePage() {
                 value={fullName}
                 onChange={(e) => setFullName(e.target.value)}
                 required
+                placeholder="Tu nombre"
                 className="w-full h-11 px-3.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-neutral-900 focus:outline-none focus:border-neutral-900 transition-colors"
               />
             </div>
 
-            {/* Fecha en que dejó de fumar */}
-            <div>
-              <label className="block text-xs font-medium text-neutral-700 mb-1 flex items-center justify-between">
-                <span>Fecha de inicio sin fumar</span>
-                <span className="text-[10px] text-neutral-400">Último cigarrillo</span>
-              </label>
-              <input
-                type="date"
-                value={smokeFreeDate}
-                onChange={(e) => setSmokeFreeDate(e.target.value)}
-                required
-                className="w-full h-11 px-3.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-neutral-900 focus:outline-none focus:border-neutral-900 transition-colors"
-              />
-            </div>
+            {profile?.role === 'smoker' && (
+              <>
+                {/* Fecha en que dejó de fumar */}
+                <div>
+                  <label className="block text-xs font-medium text-neutral-700 mb-1 flex items-center justify-between">
+                    <span>Fecha de inicio sin fumar</span>
+                    <span className="text-[10px] text-neutral-400">Último cigarrillo</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={smokeFreeDate}
+                    onChange={(e) => setSmokeFreeDate(e.target.value)}
+                    required
+                    className="w-full h-11 px-3.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-neutral-900 focus:outline-none focus:border-neutral-900 transition-colors"
+                  />
+                </div>
 
-            {/* Cigarrillos diarios y Precio */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 mb-1">
-                  Cigarrillos / día
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={cigsPerDay}
-                  onChange={(e) => setCigsPerDay(Number(e.target.value))}
-                  required
-                  className="w-full h-11 px-3.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-neutral-900 focus:outline-none focus:border-neutral-900 transition-colors"
-                />
-              </div>
+                {/* Cigarrillos diarios y Precio */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">
+                      Cigarrillos / día
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={cigsPerDay}
+                      onChange={(e) => setCigsPerDay(Number(e.target.value))}
+                      required
+                      className="w-full h-11 px-3.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-neutral-900 focus:outline-none focus:border-neutral-900 transition-colors"
+                    />
+                  </div>
 
-              <div>
-                <label className="block text-xs font-medium text-neutral-700 mb-1">
-                  Precio cajetilla (€)
-                </label>
-                <input
-                  type="number"
-                  step="0.05"
-                  min="0.5"
-                  max="50"
-                  value={packPrice}
-                  onChange={(e) => setPackPrice(Number(e.target.value))}
-                  required
-                  className="w-full h-11 px-3.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-neutral-900 focus:outline-none focus:border-neutral-900 transition-colors"
-                />
-              </div>
-            </div>
+                  <div>
+                    <label className="block text-xs font-medium text-neutral-700 mb-1">
+                      Precio cajetilla (€)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.05"
+                      min="0.5"
+                      max="50"
+                      value={packPrice}
+                      onChange={(e) => setPackPrice(Number(e.target.value))}
+                      required
+                      className="w-full h-11 px-3.5 bg-neutral-50 border border-neutral-200 rounded-xl text-sm text-neutral-900 focus:outline-none focus:border-neutral-900 transition-colors"
+                    />
+                  </div>
+                </div>
 
-            {/* Penalización por recaída */}
-            <div>
-              <label className="block text-xs font-medium text-neutral-700 mb-1.5 flex items-center justify-between">
-                <span>Aporte al bote por recaída</span>
-                <span className="text-[10px] text-emerald-800 font-semibold">{penaltyAmount}€ por tropiezo</span>
-              </label>
+                {/* Penalización por recaída */}
+                <div>
+                  <label className="block text-xs font-medium text-neutral-700 mb-1.5 flex items-center justify-between">
+                    <span>Aporte al bote por recaída</span>
+                    <span className="text-[10px] text-emerald-800 font-semibold">{penaltyAmount}€ por tropiezo</span>
+                  </label>
 
-              <div className="grid grid-cols-4 gap-2">
-                {[1.0, 3.0, 5.0, 10.0].map((amt) => {
-                  const isSelected = penaltyAmount === amt
-                  return (
-                    <button
-                      key={amt}
-                      type="button"
-                      onClick={() => setPenaltyAmount(amt)}
-                      className={`py-2 rounded-xl border text-xs font-medium transition-all ${
-                        isSelected
-                          ? 'bg-neutral-950 text-white border-neutral-950 font-bold'
-                          : 'bg-neutral-50 border-neutral-200 text-neutral-700 hover:bg-neutral-100'
-                      }`}
-                    >
-                      {amt}€
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[1.0, 3.0, 5.0, 10.0].map((amt) => {
+                      const isSelected = penaltyAmount === amt
+                      return (
+                        <button
+                          key={amt}
+                          type="button"
+                          onClick={() => setPenaltyAmount(amt)}
+                          className={`py-2 rounded-xl border text-xs font-medium transition-all ${
+                            isSelected
+                              ? 'bg-neutral-950 text-white border-neutral-950 font-bold'
+                              : 'bg-neutral-50 border-neutral-200 text-neutral-700 hover:bg-neutral-100'
+                          }`}
+                        >
+                          {amt}€
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Botón Guardar */}
             <div className="pt-2">
@@ -436,7 +441,7 @@ export default function ProfilePage() {
                 {isSaving ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
-                  <span>Guardar Preferencias</span>
+                  <span>Guardar Cambios</span>
                 )}
               </button>
             </div>
@@ -445,7 +450,10 @@ export default function ProfilePage() {
       </main>
 
       {/* BARRA DE NAVEGACIÓN INFERIOR */}
-      <BottomNav currentTab="profile" />
+      <BottomNav
+        currentTab="profile"
+        userRole={profile?.role || 'smoker'}
+      />
     </div>
   )
 }

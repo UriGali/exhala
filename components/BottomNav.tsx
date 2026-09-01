@@ -9,45 +9,73 @@ export type NavTab = 'home' | 'plant' | 'friends' | 'badges' | 'profile'
 interface BottomNavProps {
   currentTab: NavTab
   unreadFriendsCount?: number
+  userRole?: 'smoker' | 'friend'
 }
 
-export default function BottomNav({ currentTab, unreadFriendsCount = 0 }: BottomNavProps) {
-  const navItems = [
-    {
-      id: 'home' as NavTab,
-      label: 'Inicio',
-      href: '/dashboard/smoker',
-      icon: Home,
-    },
-    {
-      id: 'plant' as NavTab,
-      label: 'Planta',
-      href: '/dashboard/plant',
-      icon: Sprout,
-    },
-    {
-      id: 'friends' as NavTab,
-      label: 'Amigos',
-      href: '/dashboard/friends',
-      icon: Users,
-    },
-    {
-      id: 'badges' as NavTab,
-      label: 'Logros',
-      href: '/dashboard/badges',
-      icon: Award,
-    },
-    {
-      id: 'profile' as NavTab,
-      label: 'Perfil',
-      href: '/dashboard/profile',
-      icon: User,
-    },
-  ]
+export default function BottomNav({
+  currentTab,
+  unreadFriendsCount = 0,
+  userRole = 'smoker',
+}: BottomNavProps) {
+  const isGuardian = userRole === 'friend'
+
+  const navItems = isGuardian
+    ? [
+        {
+          id: 'friends' as NavTab,
+          label: 'Comunidad',
+          href: '/dashboard/friends',
+          icon: Users,
+        },
+        {
+          id: 'plant' as NavTab,
+          label: 'Jardines',
+          href: '/dashboard/plant',
+          icon: Sprout,
+        },
+        {
+          id: 'profile' as NavTab,
+          label: 'Perfil',
+          href: '/dashboard/profile',
+          icon: User,
+        },
+      ]
+    : [
+        {
+          id: 'home' as NavTab,
+          label: 'Inicio',
+          href: '/dashboard/smoker',
+          icon: Home,
+        },
+        {
+          id: 'plant' as NavTab,
+          label: 'Planta',
+          href: '/dashboard/plant',
+          icon: Sprout,
+        },
+        {
+          id: 'friends' as NavTab,
+          label: 'Amigos',
+          href: '/dashboard/friends',
+          icon: Users,
+        },
+        {
+          id: 'badges' as NavTab,
+          label: 'Logros',
+          href: '/dashboard/badges',
+          icon: Award,
+        },
+        {
+          id: 'profile' as NavTab,
+          label: 'Perfil',
+          href: '/dashboard/profile',
+          icon: User,
+        },
+      ]
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/90 backdrop-blur-md border-t border-neutral-100 py-2 max-w-md mx-auto">
-      <div className="grid grid-cols-5 px-1.5">
+      <div className={`grid ${isGuardian ? 'grid-cols-3' : 'grid-cols-5'} px-1.5`}>
         {navItems.map((item) => {
           const isActive = currentTab === item.id
           const Icon = item.icon

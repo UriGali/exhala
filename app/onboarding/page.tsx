@@ -245,11 +245,9 @@ const MOTIVATION_OPTIONS: { id: MotivationType; label: string; icon: React.Compo
 
 export default function OnboardingPage() {
   const router = useRouter()
-  const [currentStep, setCurrentStep] = useState<number>(1)
-  const totalSteps = 5
-
   // Estado del usuario autenticado
   const [userId, setUserId] = useState<string | null>(null)
+  const [userRole, setUserRole] = useState<'smoker' | 'friend'>('smoker')
   const [loadingUser, setLoadingUser] = useState<boolean>(true)
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
 
@@ -276,6 +274,9 @@ export default function OnboardingPage() {
   const [squadCode, setSquadCode] = useState<string>('')
   const [copiedCode, setCopiedCode] = useState<boolean>(false)
 
+  const isGuardian = userRole === 'friend'
+  const totalSteps = isGuardian ? 2 : 5
+
   // Inicializar usuario y fecha
   useEffect(() => {
     async function initUser() {
@@ -298,9 +299,12 @@ export default function OnboardingPage() {
         // Comprobar si ya tiene datos en profiles
         const { data: profile } = await supabase
           .from('profiles')
-          .select('full_name, smoke_free_since, cigs_per_day, pack_price, penalty_amount')
+          .select('role, full_name, smoke_free_since, cigs_per_day, pack_price, penalty_amount')
           .eq('id', user.id)
           .maybeSingle()
+
+        const detectedRole = (profile?.role || user.user_metadata?.role || 'smoker') as 'smoker' | 'friend'
+        setUserRole(detectedRole)
 
         if (profile) {
           if (profile.full_name) setFullName(profile.full_name)
@@ -397,6 +401,10 @@ export default function OnboardingPage() {
 
   // Validaciones para avanzar paso
   const canAdvance = () => {
+    if (isGuardian) {
+      if (currentStep === 1) return fullName.trim().length > 0
+      return true
+    }
     if (currentStep === 1) {
       return fullName.trim().length > 0 && Boolean(selectedPlant)
     }
@@ -442,6 +450,25 @@ export default function OnboardingPage() {
           colors: ['#10B981', '#0EA5E9', '#F59E0B', '#A855F7', '#14B8A6'],
         })
       } catch {}
+
+      if (isGuardian) {
+        // Guardar perfil de Guardián (sin métricas de fumar ni planta propia)
+        const { error: guardianError } = await supabase
+          .from('profiles')
+          .upsert({
+            id: userId,
+            role: 'friend',
+            full_name: fullName.trim() || 'Guardián',
+            updated_at: new Date().toISOString(),
+          })
+
+        if (guardianError) throw guardianError
+
+        setTimeout(() => {
+          router.push('/dashboard/friends')
+        }, 1000)
+        return
+      }
 
       // Convertir la fecha seleccionada a ISO timestamp
       const dateIso = smokeFreeDate
@@ -538,9 +565,219 @@ export default function OnboardingPage() {
       <main className="relative z-10 flex-1 my-5 flex flex-col justify-center">
 
         {/* ======================================================== */}
-        {/* PASO 1: IDENTIDAD & CATÁLOGO DE 6 PLANTAS */}
+        {/* FLUJO GUARDIÁN: PASO 1 (NOMBRE) */}
         {/* ======================================================== */}
-        {currentStep === 1 && (
+        {isGuardian && currentStep === 1 && (
+          <div className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-300">
+            <div>
+              <span className="text-[10px] uppercase font-bold tracking-widest text-sky-800 bg-sky-100 px-2.5 py-0.5 rounded-full">
+                Rol: Guardián de Apoyo 🛡️
+              </span>
+              <h2 className="text-2xl font-bold tracking-tight text-neutral-950 mt-2">
+                ¿Cómo te llamas?
+              </h2>
+              <p className="text-xs text-neutral-500 mt-1 leading-relaxed">
+                Introduce tu nombre para que tus amigos sepan quién les acompaña y anima.
+              </p>
+            </div>
+
+            <div className="space-y-1.5 pt-2">
+              <label className="block text-xs font-semibold text-neutral-700">
+                Tu nombre o apodo
+              </label>
+              <input
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Ej. Uri, María, Carlos..."
+                autoFocus
+                className="w-full h-13 px-4 bg-white border border-neutral-200 focus:border-neutral-900 rounded-2xl text-base text-neutral-900 placeholder:text-neutral-400 focus:outline-none transition-colors shadow-xs"
+              />
+            </div>
+
+            <div className="bg-sky-50/80 border border-sky-200/70 rounded-2xl p-4 space-y-2">
+              <div className="flex items-center gap-2 text-sky-900 font-semibold text-xs">
+                <Users className="w-4 h-4 text-sky-700" />
+                <span>Tu misión en Exhala</span>
+              </div>
+              <p className="text-[11px] text-sky-800 leading-relaxed">
+                Como guardián, ayudarás a tus amigos regando sus plantas, chateando con ellos y recibiendo sus alertas SOS cuando tengan un momento de debilidad.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* FLUJO GUARDIÁN: PASO 2 (EXPLICACIÓN DE ACCIONES) */}
+        {/* ======================================================== */}
+        {isGuardian && currentStep === 2 && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
+            <div>
+              <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full">
+                Tu papel activo
+              </span>
+              <h2 className="text-2xl font-bold tracking-tight text-neutral-950 mt-1.5">
+                ¡Bienvenido, {fullName.trim() || 'Guardián'}!
+              </h2>
+              <p className="text-xs text-neutral-500 mt-0.5 leading-relaxed">
+                Estas son las 4 acciones clave con las que ayudarás a tus amigos a triunfar:
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2.5 pt-1">
+              <div className="bg-white border border-neutral-200/80 rounded-2xl p-3.5 flex items-start gap-3 shadow-2xs">
+                <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
+                  <Droplets className="w-5 h-5 fill-emerald-600/20 stroke-[2.2]" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-neutral-950">Regar sus plantas</h4>
+                  <p className="text-[11px] text-neutral-500 mt-0.5 leading-snug">
+                    Dales agua diariamente a sus plantas para llenarlas de vitalidad y ayudarles a crecer.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white border border-neutral-200/80 rounded-2xl p-3.5 flex items-start gap-3 shadow-2xs">
+                <div className="w-9 h-9 rounded-xl bg-sky-50 text-sky-700 flex items-center justify-center shrink-0 mt-0.5">
+                  <Sparkles className="w-5 h-5 stroke-[2.2]" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-neutral-950">Chatear y dar ánimos</h4>
+                  <p className="text-[11px] text-neutral-500 mt-0.5 leading-snug">
+                    Envíales mensajes directos de apoyo cuando tengan dudas o momentos difíciles.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white border border-neutral-200/80 rounded-2xl p-3.5 flex items-start gap-3 shadow-2xs">
+                <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0 mt-0.5">
+                  <HeartPulse className="w-5 h-5 stroke-[2.2]" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-neutral-950">Alertas SOS en directo</h4>
+                  <p className="text-[11px] text-neutral-500 mt-0.5 leading-snug">
+                    Recibirás notificaciones push prioritarias si un amigo pulsa el botón SOS por un antojo.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white border border-neutral-200/80 rounded-2xl p-3.5 flex items-start gap-3 shadow-2xs">
+                <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center shrink-0 mt-0.5">
+                  <Sprout className="w-5 h-5 stroke-[2.2]" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-neutral-950">Visitar sus jardines</h4>
+                  <p className="text-[11px] text-neutral-500 mt-0.5 leading-snug">
+                    Explora las plantas maduras que tus amigos van floreciendo en su jardín botánico.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* FLUJO FUMADOR: PASO 1 (IDENTIDAD & PLANTA) */}
+        {/* ======================================================== */}
+        {!isGuardian && currentStep === 1 && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
+            <div>
+              <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-800 bg-emerald-100/80 px-2.5 py-0.5 rounded-full">
+                Tu Comienzo
+              </span>
+              <h2 className="text-2xl font-semibold tracking-tight text-neutral-950 mt-1.5">
+                Siembra tu nueva vida
+              </h2>
+              <p className="text-xs text-neutral-500 mt-0.5 leading-relaxed">
+                Elige la planta compañera que florecerá con cada respiración pura.
+              </p>
+            </div>
+
+            {/* Input Nombre Limpio */}
+            <div className="space-y-1">
+              <label className="block text-xs font-medium text-neutral-600">
+                Tu nombre
+              </label>
+              <input
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Tu nombre o apodo"
+                className="w-full h-12 px-4 bg-white border border-neutral-200 focus:border-neutral-900 rounded-2xl text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none transition-colors shadow-xs"
+              />
+            </div>
+
+            {/* Tarjeta de Previsualización Hero */}
+            <div className="bg-white border border-neutral-200/80 rounded-3xl p-4 shadow-xs flex items-center gap-4 relative overflow-hidden">
+              <div className="relative shrink-0 flex items-center justify-center">
+                <PlantHeroIllustration plantId={selectedPlant} />
+              </div>
+
+              <div className="flex-1 pr-2">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-semibold text-neutral-950">
+                    {currentPlantData.name}
+                  </h3>
+                </div>
+                <span className="inline-block text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md mt-0.5">
+                  {currentPlantData.tag}
+                </span>
+                <p className="text-[11px] text-neutral-500 mt-1 leading-snug">
+                  {currentPlantData.description}
+                </p>
+              </div>
+            </div>
+
+            {/* Catálogo de 6 Plantas (Grid 2 Columnas) */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-medium text-neutral-600">
+                Selecciona tu especie guía
+              </label>
+
+              <div className="grid grid-cols-2 gap-2">
+                {PLANT_OPTIONS.map((plant) => {
+                  const isSelected = selectedPlant === plant.id
+                  return (
+                    <button
+                      key={plant.id}
+                      type="button"
+                      onClick={() => setSelectedPlant(plant.id)}
+                      className={`text-left p-3 rounded-2xl border transition-all duration-200 flex flex-col justify-between min-h-[92px] relative active:scale-[0.98] ${
+                        isSelected
+                          ? 'bg-white border-neutral-950 shadow-sm ring-1 ring-neutral-950'
+                          : 'bg-white/80 border-neutral-200/70 hover:border-neutral-300 hover:bg-white'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between w-full">
+                        <span className="text-xs font-semibold text-neutral-950 line-clamp-1">
+                          {plant.name}
+                        </span>
+                        {isSelected ? (
+                          <div className="w-4 h-4 rounded-full bg-neutral-950 text-white flex items-center justify-center shrink-0 ml-1">
+                            <Check className="w-2.5 h-2.5 stroke-[3]" />
+                          </div>
+                        ) : (
+                          <div className="w-4 h-4 rounded-full border border-neutral-300 shrink-0 ml-1" />
+                        )}
+                      </div>
+
+                      <div className="mt-2">
+                        <span className="text-[10px] text-emerald-800 font-medium block line-clamp-1">
+                          {plant.subtitle}
+                        </span>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* FLUJO FUMADOR: PASO 2: RADIOGRAFÍA DE HÁBITOS */}
+        {/* ======================================================== */}
+        {!isGuardian && currentStep === 2 && (
           <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
             <div>
               <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-800 bg-emerald-100/80 px-2.5 py-0.5 rounded-full">
@@ -1082,12 +1319,21 @@ export default function OnboardingPage() {
             {isSubmitting ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Plantando tu libertad...</span>
+                <span>{isGuardian ? 'Guardando tu perfil...' : 'Plantando tu libertad...'}</span>
               </>
             ) : (
               <>
-                <Sprout className="w-4 h-4" />
-                <span>Plantar mi libertad 🌿</span>
+                {isGuardian ? (
+                  <>
+                    <Users className="w-4 h-4" />
+                    <span>Entrar a la Comunidad 🌿</span>
+                  </>
+                ) : (
+                  <>
+                    <Sprout className="w-4 h-4" />
+                    <span>Plantar mi libertad 🌿</span>
+                  </>
+                )}
               </>
             )}
           </button>
