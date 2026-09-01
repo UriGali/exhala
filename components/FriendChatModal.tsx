@@ -72,6 +72,30 @@ export default function FriendChatModal({
     const sortedIds = [currentUserId, friend.id].sort()
     const channelName = `chat-room-${sortedIds[0]}-${sortedIds[1]}`
 
+    // Marcar como leído de forma infalible (vía API backend y cliente Supabase)
+    const markMessagesAsRead = async () => {
+      if (!friend.id || !currentUserId) return
+      try {
+        fetch('/api/messages/read', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ senderId: friend.id, receiverId: currentUserId }),
+        }).catch(() => {})
+
+        if (isValidUUID(friend.id) && isValidUUID(currentUserId)) {
+          supabase
+            .from('messages')
+            .update({ read_at: new Date().toISOString() })
+            .eq('sender_id', friend.id)
+            .eq('receiver_id', currentUserId)
+            .is('read_at', null)
+            .then(() => {})
+        }
+      } catch (e) {
+        console.warn('Error marking messages as read:', e)
+      }
+    }
+
     const fetchMessages = async () => {
       try {
         const { data, error } = await supabase
@@ -84,6 +108,7 @@ export default function FriendChatModal({
 
         if (!error && data && isMounted) {
           setMessages(data)
+          markMessagesAsRead()
         }
       } catch (err) {
         console.warn('Error polling messages:', err)
@@ -92,7 +117,10 @@ export default function FriendChatModal({
 
     const initChat = async () => {
       try {
-        // 1. Verify that friend profile exists in profiles table (prevents FK constraint violation 23503)
+        // 1. Marcar como leído de inmediato al abrir modal
+        markMessagesAsRead()
+
+        // 2. Verify that friend profile exists in profiles table (prevents FK constraint violation 23503)
         const { data: receiverProfile } = await supabase
           .from('profiles')
           .select('id')
@@ -109,7 +137,7 @@ export default function FriendChatModal({
 
         if (isMounted) setIsRealProfile(true)
 
-        // 2. Fetch real messages from DB
+        // 3. Fetch real messages from DB
         const { data, error } = await supabase
           .from('messages')
           .select('*')
@@ -125,19 +153,12 @@ export default function FriendChatModal({
           setTimeout(scrollToBottom, 100)
         }
 
-        // Marcar todos los mensajes entrantes de este amigo como leídos inmediatamente
-        if (isValidUUID(friend.id) && isValidUUID(currentUserId)) {
-          await supabase
-            .from('messages')
-            .update({ read_at: new Date().toISOString() })
-            .eq('sender_id', friend.id)
-            .eq('receiver_id', currentUserId)
-            .is('read_at', null)
-        }
+        // Marcar nuevamente tras cargar los mensajes
+        markMessagesAsRead()
 
         if (!isMounted) return
 
-        // 3. Setup Shared Realtime Channel with Broadcast + Postgres Changes
+        // 4. Setup Shared Realtime Channel with Broadcast + Postgres Changes
         channel = supabase.channel(channelName, {
           config: {
             broadcast: { self: false },
@@ -152,12 +173,8 @@ export default function FriendChatModal({
               return [...prev, payload]
             })
             // Marcar como leído
-            if (payload.sender_id === friend.id && isValidUUID(currentUserId)) {
-              supabase
-                .from('messages')
-                .update({ read_at: new Date().toISOString() })
-                .eq('id', payload.id)
-                .then(() => {})
+            if (payload.sender_id === friend.id) {
+              markMessagesAsRead()
             }
             setTimeout(scrollToBottom, 60)
           })
@@ -180,12 +197,8 @@ export default function FriendChatModal({
                   return [...prev, newMsg]
                 })
                 // Marcar como leído
-                if (newMsg.sender_id === friend.id && isValidUUID(currentUserId)) {
-                  supabase
-                    .from('messages')
-                    .update({ read_at: new Date().toISOString() })
-                    .eq('id', newMsg.id)
-                    .then(() => {})
+                if (newMsg.sender_id === friend.id) {
+                  markMessagesAsRead()
                 }
                 setTimeout(scrollToBottom, 60)
               }

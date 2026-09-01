@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback, useTransition } from 'react'
+import React, { useState, useEffect, useCallback, useTransition, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -176,10 +176,15 @@ export default function FriendsDashboard() {
 
   // Chat & Toast
   const [activeChatFriend, setActiveChatFriend] = useState<FriendItem | null>(null)
+  const activeChatFriendRef = useRef<FriendItem | null>(null)
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({})
   const [pushPermission, setPushPermission] = useState<string>('default')
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [processingId, setProcessingId] = useState<string | null>(null)
+
+  useEffect(() => {
+    activeChatFriendRef.current = activeChatFriend
+  }, [activeChatFriend])
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg)
@@ -199,6 +204,12 @@ export default function FriendsDashboard() {
       unreadRows?.forEach((r) => {
         counts[r.sender_id] = (counts[r.sender_id] || 0) + 1
       })
+
+      // Si el chat con un amigo está abierto ahora mismo en pantalla, su badge debe ser 0
+      if (activeChatFriendRef.current?.id) {
+        counts[activeChatFriendRef.current.id] = 0
+      }
+
       setUnreadCounts(counts)
     } catch (e) {
       console.warn('Could not load unread message counts:', e)
@@ -207,10 +218,19 @@ export default function FriendsDashboard() {
 
   // Abrir chat y marcar mensajes de ese amigo como leídos
   const handleOpenChat = async (friend: FriendItem) => {
+    activeChatFriendRef.current = friend
     setActiveChatFriend(friend)
     setUnreadCounts((prev) => ({ ...prev, [friend.id]: 0 }))
 
     if (userId && isValidUUID(friend.id)) {
+      // 1. Llamada a endpoint API servidor
+      fetch('/api/messages/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ senderId: friend.id, receiverId: userId }),
+      }).catch(() => {})
+
+      // 2. Llamada directa vía cliente Supabase
       try {
         await supabase
           .from('messages')
@@ -393,6 +413,16 @@ export default function FriendsDashboard() {
             async (payload: any) => {
               const newMsg = payload?.new
               if (!newMsg) return
+
+              // Si el usuario ya está dentro del chat con este remitente, marcar como leído y no incrementar badge
+              if (activeChatFriendRef.current?.id === newMsg.sender_id) {
+                fetch('/api/messages/read', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ senderId: newMsg.sender_id, receiverId: user.id }),
+                }).catch(() => {})
+                return
+              }
 
               // Incrementar contador no leído para el remitente
               setUnreadCounts((prev) => ({
