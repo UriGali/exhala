@@ -785,107 +785,9 @@ export default function OnboardingPage() {
         )}
 
         {/* ======================================================== */}
-        {/* FLUJO FUMADOR: PASO 2: RADIOGRAFÍA DE HÁBITOS */}
+        {/* FLUJO FUMADOR: PASO 2: RADIOGRAFÍA DE HÁBITOS (MULTISELECCIÓN + DUPLICACIÓN) */}
         {/* ======================================================== */}
         {!isGuardian && currentStep === 2 && (
-          <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-            <div>
-              <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-800 bg-emerald-100/80 px-2.5 py-0.5 rounded-full">
-                Tu Comienzo
-              </span>
-              <h2 className="text-2xl font-semibold tracking-tight text-neutral-950 mt-1.5">
-                Siembra tu nueva vida
-              </h2>
-              <p className="text-xs text-neutral-500 mt-0.5 leading-relaxed">
-                Elige la planta compañera que florecerá con cada respiración pura.
-              </p>
-            </div>
-
-            {/* Input Nombre Limpio */}
-            <div className="space-y-1">
-              <label className="block text-xs font-medium text-neutral-600">
-                Tu nombre
-              </label>
-              <input
-                type="text"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Tu nombre o apodo"
-                className="w-full h-12 px-4 bg-white border border-neutral-200 focus:border-neutral-900 rounded-2xl text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none transition-colors shadow-xs"
-              />
-            </div>
-
-            {/* Tarjeta de Previsualización Hero */}
-            <div className="bg-white border border-neutral-200/80 rounded-3xl p-4 shadow-xs flex items-center gap-4 relative overflow-hidden">
-              <div className="relative shrink-0 flex items-center justify-center">
-                <PlantHeroIllustration plantId={selectedPlant} />
-              </div>
-
-              <div className="flex-1 pr-2">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-base font-semibold text-neutral-950">
-                    {currentPlantData.name}
-                  </h3>
-                </div>
-                <span className="inline-block text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md mt-0.5">
-                  {currentPlantData.tag}
-                </span>
-                <p className="text-[11px] text-neutral-500 mt-1 leading-snug">
-                  {currentPlantData.description}
-                </p>
-              </div>
-            </div>
-
-            {/* Catálogo de 6 Plantas (Grid 2 Columnas) */}
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-neutral-600">
-                Selecciona tu especie guía
-              </label>
-
-              <div className="grid grid-cols-2 gap-2">
-                {PLANT_OPTIONS.map((plant) => {
-                  const isSelected = selectedPlant === plant.id
-                  return (
-                    <button
-                      key={plant.id}
-                      type="button"
-                      onClick={() => setSelectedPlant(plant.id)}
-                      className={`text-left p-3 rounded-2xl border transition-all duration-200 flex flex-col justify-between min-h-[92px] relative active:scale-[0.98] ${
-                        isSelected
-                          ? 'bg-white border-neutral-950 shadow-sm ring-1 ring-neutral-950'
-                          : 'bg-white/80 border-neutral-200/70 hover:border-neutral-300 hover:bg-white'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between w-full">
-                        <span className="text-xs font-semibold text-neutral-950 line-clamp-1">
-                          {plant.name}
-                        </span>
-                        {isSelected ? (
-                          <div className="w-4 h-4 rounded-full bg-neutral-950 text-white flex items-center justify-center shrink-0 ml-1">
-                            <Check className="w-2.5 h-2.5 stroke-[3]" />
-                          </div>
-                        ) : (
-                          <div className="w-4 h-4 rounded-full border border-neutral-300 shrink-0 ml-1" />
-                        )}
-                      </div>
-
-                      <div className="mt-2">
-                        <span className="text-[10px] text-emerald-800 font-medium block line-clamp-1">
-                          {plant.subtitle}
-                        </span>
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* PASO 2: RADIOGRAFÍA DE HÁBITOS (MULTISELECCIÓN + DUPLICACIÓN) */}
-        {/* ======================================================== */}
-        {currentStep === 2 && (
           <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
             <div>
               <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-800 bg-emerald-100/80 px-2.5 py-0.5 rounded-full">
@@ -1057,7 +959,7 @@ export default function OnboardingPage() {
         {/* ======================================================== */}
         {/* PASO 3: TU MOTIVACIÓN & META DE AHORRO */}
         {/* ======================================================== */}
-        {currentStep === 3 && (
+        {!isGuardian && currentStep === 3 && (
           <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
             <div>
               <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-800 bg-emerald-100/80 px-2.5 py-0.5 rounded-full">
@@ -1143,7 +1045,7 @@ export default function OnboardingPage() {
         {/* ======================================================== */}
         {/* PASO 4: EL PACTO SOCIAL (SQUAD & MULTAS) */}
         {/* ======================================================== */}
-        {currentStep === 4 && (
+        {!isGuardian && currentStep === 4 && (
           <div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
             <div>
               <span className="text-[10px] uppercase font-bold tracking-widest text-emerald-800 bg-emerald-100/80 px-2.5 py-0.5 rounded-full">
@@ -1231,7 +1133,7 @@ export default function OnboardingPage() {
         {/* ======================================================== */}
         {/* PASO 5: REVELACIÓN DE IMPACTO CONSOLIDADO */}
         {/* ======================================================== */}
-        {currentStep === 5 && (
+        {!isGuardian && currentStep === 5 && (
           <div className="space-y-4 animate-in fade-in zoom-in-95 duration-300 text-center">
             {/* Ilustración de la planta seleccionada */}
             <div className="flex justify-center pt-1">
