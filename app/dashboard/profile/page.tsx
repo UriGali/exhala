@@ -26,6 +26,7 @@ import {
 import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
 import { getPushPermission, requestPushPermissionAndSubscribe } from '@/lib/push-notifications'
+import BottomNav from '@/components/BottomNav'
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -444,41 +445,7 @@ export default function ProfilePage() {
       </main>
 
       {/* BARRA DE NAVEGACIÓN INFERIOR */}
-      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/90 backdrop-blur-md border-t border-neutral-100 py-2 max-w-md mx-auto">
-        <div className="grid grid-cols-4 px-2">
-          <Link
-            href="/dashboard/smoker"
-            className="flex flex-col items-center justify-center py-1.5 transition-colors text-neutral-400 hover:text-neutral-600"
-          >
-            <Home className="w-5 h-5" />
-            <span className="text-[10px] mt-1">Inicio</span>
-          </Link>
-
-          <Link
-            href="/dashboard/friends"
-            className="flex flex-col items-center justify-center py-1.5 transition-colors text-neutral-400 hover:text-neutral-600"
-          >
-            <Users className="w-5 h-5" />
-            <span className="text-[10px] mt-1">Amigos</span>
-          </Link>
-
-          <Link
-            href="/dashboard/badges"
-            className="flex flex-col items-center justify-center py-1.5 transition-colors text-neutral-400 hover:text-neutral-600"
-          >
-            <Award className="w-5 h-5" />
-            <span className="text-[10px] mt-1">Logros</span>
-          </Link>
-
-          <Link
-            href="/dashboard/profile"
-            className="flex flex-col items-center justify-center py-1.5 transition-colors text-neutral-950 font-medium"
-          >
-            <User className="w-5 h-5" />
-            <span className="text-[10px] mt-1">Perfil</span>
-          </Link>
-        </div>
-      </nav>
+      <BottomNav currentTab="profile" />
     </div>
   )
 }

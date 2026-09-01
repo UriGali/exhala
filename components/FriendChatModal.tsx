@@ -101,9 +101,12 @@ export default function FriendChatModal({
           setTimeout(scrollToBottom, 100)
         }
 
-        // 3. Realtime subscription
+        if (!isMounted) return
+
+        // 3. Realtime subscription con identificador único por sesión para evitar colisiones en React StrictMode/re-renders
+        const channelName = `chat_${currentUserId}_${friend.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
         channel = supabase
-          .channel(`chat_${currentUserId}_${friend.id}`)
+          .channel(channelName)
           .on(
             'postgres_changes',
             {
@@ -112,6 +115,7 @@ export default function FriendChatModal({
               table: 'messages',
             },
             (payload) => {
+              if (!isMounted) return
               const newMsg = payload.new as Message
               if (
                 (newMsg.sender_id === friend.id && newMsg.receiver_id === currentUserId) ||
@@ -137,7 +141,9 @@ export default function FriendChatModal({
 
     return () => {
       isMounted = false
-      if (channel) supabase.removeChannel(channel)
+      if (channel) {
+        supabase.removeChannel(channel)
+      }
     }
   }, [friend, currentUserId])
 
@@ -285,7 +291,7 @@ export default function FriendChatModal({
                 </span>
               </div>
 
-              {messages.map((msg) => {
+              {messages.map((msg, idx) => {
                 const isMine = msg.sender_id === currentUserId
                 const timeStr = new Date(msg.created_at).toLocaleTimeString([], {
                   hour: '2-digit',
@@ -294,7 +300,7 @@ export default function FriendChatModal({
 
                 return (
                   <div
-                    key={msg.id}
+                    key={msg.id ? `msg-${msg.id}-${idx}` : `msg-temp-${idx}`}
                     className={`flex flex-col ${isMine ? 'items-end' : 'items-start'} space-y-1`}
                   >
                     <div

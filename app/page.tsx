@@ -170,6 +170,7 @@ export default function OnboardingLoginPage() {
             src="/logo-wordmark.png"
             alt="Exhala — Respira y Florece"
             fill
+            sizes="(max-width: 640px) 192px, 224px"
             priority
             className="object-contain"
           />

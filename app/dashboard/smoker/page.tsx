@@ -29,6 +29,7 @@ import {
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
+import BottomNav from '@/components/BottomNav'
 
 // Props para la ilustración de la planta orgánica multi-fase
 interface OrganicPlantProps {
@@ -697,6 +698,7 @@ export default function SmokerDashboard() {
               src="/logo-wordmark.png"
               alt="Exhala"
               fill
+              sizes="128px"
               priority
               className="object-contain object-left"
             />
@@ -747,14 +749,23 @@ export default function SmokerDashboard() {
             isWateringAnim={isWateringAnim}
           />
           
-          {/* Badge de Fase de Crecimiento */}
-          <div className="mt-2 flex items-center gap-2">
-            <span className="text-xs font-semibold text-neutral-900 bg-neutral-100 px-3 py-1 rounded-full border border-neutral-200/60">
-              Fase: {growthPhaseName}
-            </span>
-            <span className="text-xs text-neutral-400">
-              • {totalWaterings} {totalWaterings === 1 ? 'riego' : 'riegos'}
-            </span>
+          {/* Badge de Fase de Crecimiento y Enlace a Jardín */}
+          <div className="mt-2 flex flex-col items-center gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-neutral-900 bg-neutral-100 px-3 py-1 rounded-full border border-neutral-200/60">
+                Fase: {growthPhaseName}
+              </span>
+              <span className="text-xs text-neutral-400">
+                • {totalWaterings} {totalWaterings === 1 ? 'riego' : 'riegos'}
+              </span>
+            </div>
+            <Link
+              href="/dashboard/plant"
+              className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200/80 px-3 py-1 rounded-full flex items-center gap-1.5 transition-colors shadow-2xs"
+            >
+              <Sprout className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Ver Crecimiento en Jardín ({totalWaterings % 30}/30) →</span>
+            </Link>
           </div>
         </section>
 
@@ -1034,53 +1045,7 @@ export default function SmokerDashboard() {
       )}
 
       {/* BARRA DE NAVEGACIÓN INFERIOR */}
-      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/90 backdrop-blur-md border-t border-neutral-100 py-2 max-w-md mx-auto">
-        <div className="grid grid-cols-4 px-2">
-          <Link
-            href="/dashboard/smoker"
-            onClick={() => setActiveTab('home')}
-            className={`flex flex-col items-center justify-center py-1.5 transition-colors ${
-              activeTab === 'home' ? 'text-neutral-950 font-medium' : 'text-neutral-400 hover:text-neutral-600'
-            }`}
-          >
-            <Home className="w-5 h-5" />
-            <span className="text-[10px] mt-1">Inicio</span>
-          </Link>
-
-          <Link
-            href="/dashboard/friends"
-            onClick={() => setActiveTab('friends')}
-            className={`flex flex-col items-center justify-center py-1.5 transition-colors ${
-              activeTab === 'friends' ? 'text-neutral-950 font-medium' : 'text-neutral-400 hover:text-neutral-600'
-            }`}
-          >
-            <Users className="w-5 h-5" />
-            <span className="text-[10px] mt-1">Amigos</span>
-          </Link>
-
-          <Link
-            href="/dashboard/badges"
-            onClick={() => setActiveTab('badges')}
-            className={`flex flex-col items-center justify-center py-1.5 transition-colors ${
-              activeTab === 'badges' ? 'text-neutral-950 font-medium' : 'text-neutral-400 hover:text-neutral-600'
-            }`}
-          >
-            <Award className="w-5 h-5" />
-            <span className="text-[10px] mt-1">Logros</span>
-          </Link>
-
-          <Link
-            href="/dashboard/profile"
-            onClick={() => setActiveTab('profile')}
-            className={`flex flex-col items-center justify-center py-1.5 transition-colors ${
-              activeTab === 'profile' ? 'text-neutral-950 font-medium' : 'text-neutral-400 hover:text-neutral-600'
-            }`}
-          >
-            <User className="w-5 h-5" />
-            <span className="text-[10px] mt-1">Perfil</span>
-          </Link>
-        </div>
-      </nav>
+      <BottomNav currentTab="home" />
     </div>
   )
 }

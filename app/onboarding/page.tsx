@@ -513,6 +513,7 @@ export default function OnboardingPage() {
               src="/logo-wordmark.png"
               alt="Exhala"
               fill
+              sizes="112px"
               priority
               className="object-contain object-left"
             />

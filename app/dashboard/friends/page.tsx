@@ -29,6 +29,7 @@ import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
 import FriendChatModal from '@/components/FriendChatModal'
+import BottomNav from '@/components/BottomNav'
 
 type TabView = 'friends' | 'requests'
 
@@ -211,11 +212,15 @@ export default function FriendsDashboard() {
       const received: FriendRequestItem[] = []
       const sent: FriendRequestItem[] = []
 
+      const seenAcceptedUserIds = new Set<string>()
+      const seenReceivedUserIds = new Set<string>()
+      const seenSentUserIds = new Set<string>()
+
       friendships.forEach((row: any) => {
         const isMeSender = row.smoker_id === currentUserId
         const otherUser = isMeSender ? row.friend : row.smoker
 
-        if (!otherUser || otherUser.id === currentUserId) return
+        if (!otherUser || !otherUser.id || otherUser.id === currentUserId) return
 
         const name = otherUser.full_name || 'Compañero'
         const initials = getInitials(name)
@@ -223,6 +228,9 @@ export default function FriendsDashboard() {
         const status = row.status || 'accepted' // fallback for older rows
 
         if (status === 'accepted') {
+          if (seenAcceptedUserIds.has(otherUser.id)) return
+          seenAcceptedUserIds.add(otherUser.id)
+
           // Amistad activa
           let statusText = 'Guardián de apoyo'
           if (otherUser.role === 'smoker') {
@@ -250,6 +258,9 @@ export default function FriendsDashboard() {
         } else if (status === 'pending') {
           // Solicitud pendiente
           if (isMeSender) {
+            if (seenSentUserIds.has(otherUser.id)) return
+            seenSentUserIds.add(otherUser.id)
+
             sent.push({
               id: row.id,
               requesterId: otherUser.id,
@@ -261,6 +272,9 @@ export default function FriendsDashboard() {
               createdAt: row.created_at,
             })
           } else {
+            if (seenReceivedUserIds.has(otherUser.id)) return
+            seenReceivedUserIds.add(otherUser.id)
+
             received.push({
               id: row.id,
               requesterId: otherUser.id,
@@ -613,9 +627,9 @@ export default function FriendsDashboard() {
                   </div>
                 ) : (
                   <div className="space-y-3.5 pt-1">
-                    {quittingFriends.map((friend) => (
+                    {quittingFriends.map((friend, idx) => (
                       <div
-                        key={friend.id}
+                        key={friend.friendshipId ? `friend-${friend.id}-${friend.friendshipId}` : `friend-${friend.id}-${idx}`}
                         className="flex items-center justify-between group py-1 bg-neutral-50/50 hover:bg-neutral-50 rounded-2xl px-2.5 transition-colors"
                       >
                         <div
@@ -685,9 +699,9 @@ export default function FriendsDashboard() {
                   </div>
                 ) : (
                   <div className="space-y-3.5 pt-1">
-                    {supportingFriends.map((supporter) => (
+                    {supportingFriends.map((supporter, idx) => (
                       <div
-                        key={supporter.id}
+                        key={supporter.friendshipId ? `supporter-${supporter.id}-${supporter.friendshipId}` : `supporter-${supporter.id}-${idx}`}
                         className="flex items-center justify-between group py-1 bg-neutral-50/50 hover:bg-neutral-50 rounded-2xl px-2.5 transition-colors"
                       >
                         <div
@@ -781,9 +795,9 @@ export default function FriendsDashboard() {
                 </div>
               ) : (
                 <div className="space-y-3 pt-1">
-                  {pendingReceived.map((req) => (
+                  {pendingReceived.map((req, idx) => (
                     <div
-                      key={req.id}
+                      key={`received-${req.id}-${req.requesterId}-${idx}`}
                       className="bg-[#F8FAF9] border border-neutral-200/80 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in duration-200"
                     >
                       <div className="flex items-center gap-3">
@@ -847,9 +861,9 @@ export default function FriendsDashboard() {
                 </div>
 
                 <div className="space-y-2.5">
-                  {pendingSent.map((sentReq) => (
+                  {pendingSent.map((sentReq, idx) => (
                     <div
-                      key={sentReq.id}
+                      key={`sent-${sentReq.id}-${sentReq.requesterId}-${idx}`}
                       className="flex items-center justify-between p-3 rounded-2xl bg-neutral-50/70 border border-neutral-100"
                     >
                       <div className="flex items-center gap-3">
@@ -964,7 +978,7 @@ export default function FriendsDashboard() {
                   </p>
                 </div>
               ) : (
-                searchResults.map((userItem) => {
+                searchResults.map((userItem, idx) => {
                   const name = userItem.full_name || 'Usuario Exhala'
                   const initials = getInitials(name)
                   const color = getAvatarColor(name)
@@ -974,7 +988,7 @@ export default function FriendsDashboard() {
 
                   return (
                     <div
-                      key={userItem.id}
+                      key={`search-${userItem.id}-${idx}`}
                       className="p-3 bg-[#F8FAF9] hover:bg-neutral-100/70 border border-neutral-200/70 rounded-2xl flex items-center justify-between gap-3 transition-colors"
                     >
                       <div className="flex items-center gap-3 min-w-0">
@@ -1073,41 +1087,7 @@ export default function FriendsDashboard() {
       )}
 
       {/* BARRA DE NAVEGACIÓN INFERIOR */}
-      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/90 backdrop-blur-md border-t border-neutral-100 py-2 max-w-md mx-auto">
-        <div className="grid grid-cols-4 px-2">
-          <Link
-            href="/dashboard/smoker"
-            className="flex flex-col items-center justify-center py-1.5 transition-colors text-neutral-400 hover:text-neutral-600"
-          >
-            <Home className="w-5 h-5" />
-            <span className="text-[10px] mt-1">Inicio</span>
-          </Link>
-
-          <Link
-            href="/dashboard/friends"
-            className="flex flex-col items-center justify-center py-1.5 transition-colors text-neutral-950 font-medium"
-          >
-            <Users className="w-5 h-5" />
-            <span className="text-[10px] mt-1">Amigos</span>
-          </Link>
-
-          <Link
-            href="/dashboard/badges"
-            className="flex flex-col items-center justify-center py-1.5 transition-colors text-neutral-400 hover:text-neutral-600"
-          >
-            <Award className="w-5 h-5" />
-            <span className="text-[10px] mt-1">Logros</span>
-          </Link>
-
-          <Link
-            href="/dashboard/profile"
-            className="flex flex-col items-center justify-center py-1.5 transition-colors text-neutral-400 hover:text-neutral-600"
-          >
-            <User className="w-5 h-5" />
-            <span className="text-[10px] mt-1">Perfil</span>
-          </Link>
-        </div>
-      </nav>
+      <BottomNav currentTab="friends" />
     </div>
   )
 }
