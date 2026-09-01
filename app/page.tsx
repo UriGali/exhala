@@ -62,15 +62,22 @@ export default function OnboardingLoginPage() {
   const handleGoogleLogin = async () => {
     setLoading(true)
     setMessage(null)
+    const targetRole = selectedRole || 'smoker'
+
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('exhala_selected_role', targetRole)
+      } catch {}
+    }
+
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : undefined,
+          redirectTo: typeof window !== 'undefined' ? `${window.location.origin}/auth/callback?role=${targetRole}` : undefined,
           queryParams: {
             access_type: 'offline',
             prompt: 'consent',
-            role: selectedRole || 'smoker',
           },
         },
       })

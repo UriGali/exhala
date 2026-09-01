@@ -11,19 +11,47 @@ export default function AuthCallbackPage() {
   useEffect(() => {
     async function routeUser(userId: string, metaRole?: string) {
       try {
+        let selectedOAuthRole: string | null = null
+        if (typeof window !== 'undefined') {
+          const urlParams = new URLSearchParams(window.location.search)
+          selectedOAuthRole = urlParams.get('role') || localStorage.getItem('exhala_selected_role')
+        }
+
         const { data: profile } = await supabase
           .from('profiles')
           .select('role, full_name')
           .eq('id', userId)
           .maybeSingle<{ role: string; full_name: string | null }>()
 
+        // Rol efectivo: si el usuario seleccionó un rol en la pantalla (ej. 'friend'), respetarlo
+        const effectiveRole =
+          (selectedOAuthRole as 'smoker' | 'friend') ||
+          (profile?.role as 'smoker' | 'friend') ||
+          (metaRole as 'smoker' | 'friend') ||
+          'smoker'
+
+        if (!profile) {
+          await supabase.from('profiles').insert({
+            id: userId,
+            role: effectiveRole,
+            updated_at: new Date().toISOString(),
+          })
+        } else if (selectedOAuthRole && selectedOAuthRole !== profile.role && !profile.full_name) {
+          await supabase
+            .from('profiles')
+            .update({
+              role: effectiveRole,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', userId)
+        }
+
         if (!profile?.full_name) {
           router.push('/onboarding')
           return
         }
 
-        const userRole = profile.role || metaRole || 'smoker'
-        const destination = userRole === 'friend' ? '/dashboard/friends' : '/dashboard/smoker'
+        const destination = effectiveRole === 'friend' ? '/dashboard/friends' : '/dashboard/smoker'
         router.push(destination)
       } catch (err) {
         console.error('Error routing user from callback:', err)

@@ -306,7 +306,13 @@ export default function OnboardingPage() {
           .eq('id', user.id)
           .maybeSingle()
 
-        const detectedRole = (profile?.role || user.user_metadata?.role || 'smoker') as 'smoker' | 'friend'
+        const savedOAuthRole = typeof window !== 'undefined' ? localStorage.getItem('exhala_selected_role') : null
+        const detectedRole = (
+          (savedOAuthRole as 'smoker' | 'friend') ||
+          profile?.role ||
+          (user.user_metadata?.role as 'smoker' | 'friend') ||
+          'smoker'
+        ) as 'smoker' | 'friend'
         setUserRole(detectedRole)
 
         if (profile) {
