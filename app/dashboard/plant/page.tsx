@@ -111,6 +111,7 @@ export default function PlantPage() {
       } = await supabase.auth.getUser()
 
       if (authError || !user) {
+        await supabase.auth.signOut().catch(() => {})
         router.push('/')
         return
       }

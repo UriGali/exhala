@@ -286,6 +286,7 @@ export default function OnboardingPage() {
       try {
         const { data: { user }, error } = await supabase.auth.getUser()
         if (error || !user) {
+          await supabase.auth.signOut().catch(() => {})
           router.push('/')
           return
         }

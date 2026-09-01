@@ -58,6 +58,7 @@ export default function ProfilePage() {
       try {
         const { data: { user }, error: authError } = await supabase.auth.getUser()
         if (authError || !user) {
+          await supabase.auth.signOut().catch(() => {})
           router.push('/')
           return
         }

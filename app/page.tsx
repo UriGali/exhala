@@ -19,38 +19,43 @@ export default function OnboardingLoginPage() {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
-  // 0. Comprobar automáticamente si el usuario ya tiene sesión activa en el móvil
+  // 0. Comprobar automáticamente si el usuario ya tiene sesión activa válida en el móvil
   useEffect(() => {
     async function checkExistingSession() {
       try {
         const {
-          data: { session },
-        } = await supabase.auth.getSession()
+          data: { user },
+          error: userError,
+        } = await supabase.auth.getUser()
 
-        if (session?.user) {
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('role, full_name')
-            .eq('id', session.user.id)
-            .maybeSingle<{ role: UserRole; full_name: string | null }>()
-
-          if (!profile?.full_name) {
-            router.push('/onboarding')
-            return
-          }
-
-          const userRole: UserRole =
-            profile?.role ||
-            (session.user.user_metadata?.role as UserRole) ||
-            'smoker'
-
-          const destination = userRole === 'friend' ? '/dashboard/friends' : '/dashboard/smoker'
-          router.push(destination)
+        // Si el usuario no existe en la base de datos o su token expiró/fue eliminado
+        if (userError || !user) {
+          await supabase.auth.signOut().catch(() => {})
+          setCheckingSession(false)
           return
         }
+
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role, full_name')
+          .eq('id', user.id)
+          .maybeSingle<{ role: UserRole; full_name: string | null }>()
+
+        if (!profile?.full_name) {
+          router.push('/onboarding')
+          return
+        }
+
+        const userRole: UserRole =
+          profile?.role ||
+          (user.user_metadata?.role as UserRole) ||
+          'smoker'
+
+        const destination = userRole === 'friend' ? '/dashboard/friends' : '/dashboard/smoker'
+        router.push(destination)
       } catch (err) {
         console.warn('Error checking persistent session:', err)
-      } finally {
+        await supabase.auth.signOut().catch(() => {})
         setCheckingSession(false)
       }
     }
