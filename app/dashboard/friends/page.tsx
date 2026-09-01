@@ -321,6 +321,38 @@ export default function FriendsDashboard() {
         if (profile) setUserProfile(profile)
 
         await loadFriendsData(user.id)
+
+        // Escuchar mensajes entrantes en tiempo real para notificaciones globales
+        const inboxChannel = supabase
+          .channel(`user-inbox-${user.id}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'messages',
+              filter: `receiver_id=eq.${user.id}`,
+            },
+            async (payload: any) => {
+              const newMsg = payload?.new
+              if (!newMsg) return
+
+              // Obtener nombre del remitente si está disponible
+              const { data: senderProfile } = await supabase
+                .from('profiles')
+                .select('full_name')
+                .eq('id', newMsg.sender_id)
+                .maybeSingle()
+
+              const senderName = senderProfile?.full_name || 'Un amigo'
+              showToast(`💬 Mensaje de ${senderName}: "${newMsg.content.slice(0, 35)}${newMsg.content.length > 35 ? '...' : ''}"`)
+            }
+          )
+          .subscribe()
+
+        return () => {
+          supabase.removeChannel(inboxChannel)
+        }
       } catch (err) {
         console.error('Error initializing friends page:', err)
       } finally {
@@ -329,7 +361,7 @@ export default function FriendsDashboard() {
     }
 
     init()
-  }, [router, loadFriendsData])
+  }, [router, loadFriendsData, showToast])
 
   // Búsqueda por Nombre en tiempo real
   useEffect(() => {

@@ -514,7 +514,6 @@ export default function OnboardingPage() {
               alt="Exhala"
               fill
               sizes="112px"
-              priority
               className="object-contain object-left"
             />
           </div>

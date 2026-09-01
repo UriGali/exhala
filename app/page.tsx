@@ -171,7 +171,6 @@ export default function OnboardingLoginPage() {
             alt="Exhala — Respira y Florece"
             fill
             sizes="(max-width: 640px) 192px, 224px"
-            priority
             className="object-contain"
           />
         </div>
@@ -282,6 +281,7 @@ export default function OnboardingLoginPage() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="nombre@ejemplo.com"
+                    autoComplete="email"
                     required
                     disabled={loading}
                     className="w-full h-13 pl-11 pr-4 bg-white text-neutral-900 placeholder:text-neutral-400 border border-neutral-200 rounded-2xl text-sm focus:outline-none focus:border-neutral-900 transition-colors disabled:opacity-50"
@@ -301,6 +301,7 @@ export default function OnboardingLoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder={isExistingUser ? 'Tu contraseña' : 'Mínimo 6 caracteres'}
+                    autoComplete={isExistingUser ? 'current-password' : 'new-password'}
                     required
                     minLength={6}
                     disabled={loading}

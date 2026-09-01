@@ -65,6 +65,29 @@ export default function FriendChatModal({
     }
 
     let channel: any = null
+    let pollInterval: any = null
+
+    // Deterministic shared channel name for both participants
+    const sortedIds = [currentUserId, friend.id].sort()
+    const channelName = `chat-room-${sortedIds[0]}-${sortedIds[1]}`
+
+    const fetchMessages = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('messages')
+          .select('*')
+          .or(
+            `and(sender_id.eq.${currentUserId},receiver_id.eq.${friend.id}),and(sender_id.eq.${friend.id},receiver_id.eq.${currentUserId})`
+          )
+          .order('created_at', { ascending: true })
+
+        if (!error && data && isMounted) {
+          setMessages(data)
+        }
+      } catch (err) {
+        console.warn('Error polling messages:', err)
+      }
+    }
 
     const initChat = async () => {
       try {
@@ -103,10 +126,22 @@ export default function FriendChatModal({
 
         if (!isMounted) return
 
-        // 3. Realtime subscription con identificador único por sesión para evitar colisiones en React StrictMode/re-renders
-        const channelName = `chat_${currentUserId}_${friend.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
-        channel = supabase
-          .channel(channelName)
+        // 3. Setup Shared Realtime Channel with Broadcast + Postgres Changes
+        channel = supabase.channel(channelName, {
+          config: {
+            broadcast: { self: false },
+          },
+        })
+
+        channel
+          .on('broadcast', { event: 'new_message' }, ({ payload }: { payload: Message }) => {
+            if (!isMounted || !payload) return
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === payload.id)) return prev
+              return [...prev, payload]
+            })
+            setTimeout(scrollToBottom, 60)
+          })
           .on(
             'postgres_changes',
             {
@@ -114,8 +149,8 @@ export default function FriendChatModal({
               schema: 'public',
               table: 'messages',
             },
-            (payload) => {
-              if (!isMounted) return
+            (payload: any) => {
+              if (!isMounted || !payload?.new) return
               const newMsg = payload.new as Message
               if (
                 (newMsg.sender_id === friend.id && newMsg.receiver_id === currentUserId) ||
@@ -125,11 +160,14 @@ export default function FriendChatModal({
                   if (prev.some((m) => m.id === newMsg.id)) return prev
                   return [...prev, newMsg]
                 })
-                setTimeout(scrollToBottom, 100)
+                setTimeout(scrollToBottom, 60)
               }
             }
           )
           .subscribe()
+
+        // 4. Polling fallback every 2.5 seconds while open to ensure 100% sync
+        pollInterval = setInterval(fetchMessages, 2500)
       } catch (err) {
         console.error('Error loading chat messages:', err)
       } finally {
@@ -141,6 +179,7 @@ export default function FriendChatModal({
 
     return () => {
       isMounted = false
+      if (pollInterval) clearInterval(pollInterval)
       if (channel) {
         supabase.removeChannel(channel)
       }
@@ -213,6 +252,30 @@ export default function FriendChatModal({
         setMessages((prev) =>
           prev.map((m) => (m.id === tempId ? (data as Message) : m))
         )
+
+        // Broadcast to realtime room immediately
+        const sortedIds = [currentUserId, friend.id].sort()
+        const channelName = `chat-room-${sortedIds[0]}-${sortedIds[1]}`
+        const activeChannel = supabase.channel(channelName)
+        activeChannel.send({
+          type: 'broadcast',
+          event: 'new_message',
+          payload: data,
+        })
+
+        // Dispatch Web Push notification to the receiver in background
+        try {
+          fetch('/api/push/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              friendIds: [friend.id],
+              title: `💬 Mensaje de ${currentUserName || 'tu amigo'}`,
+              body: content,
+              url: '/dashboard/friends',
+            }),
+          }).catch(() => {})
+        } catch {}
       }
     } catch (err) {
       console.warn('Message kept in local state due to DB sync warning:', err)

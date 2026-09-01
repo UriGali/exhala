@@ -699,7 +699,6 @@ export default function SmokerDashboard() {
               alt="Exhala"
               fill
               sizes="128px"
-              priority
               className="object-contain object-left"
             />
           </div>
