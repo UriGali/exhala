@@ -204,9 +204,9 @@ export default function FriendsDashboard() {
       const counts: Record<string, number> = {}
       unreadRows?.forEach((r) => {
         // Consultar marca temporal de última lectura en memoria o almacenamiento local
-        let lastRead = lastReadTimestampsRef.current[r.sender_id]
+        let lastRead: string | null = lastReadTimestampsRef.current[r.sender_id] || null
         if (!lastRead && typeof window !== 'undefined') {
-          lastRead = localStorage.getItem(`exhala_chat_read_${currentUserId}_${r.sender_id}`) || undefined
+          lastRead = localStorage.getItem(`exhala_chat_read_${currentUserId}_${r.sender_id}`)
         }
 
         // Si el mensaje fue recibido antes o en el momento en que se abrió el chat, no contarlo
