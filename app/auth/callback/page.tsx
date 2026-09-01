@@ -15,7 +15,7 @@ export default function AuthCallbackPage() {
           .from('profiles')
           .select('role, full_name')
           .eq('id', userId)
-          .maybeSingle()
+          .maybeSingle<{ role: string; full_name: string | null }>()
 
         if (!profile?.full_name) {
           router.push('/onboarding')
