@@ -26,6 +26,7 @@ import {
   Loader2,
   Plus,
   Trash2,
+  Droplets,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
@@ -245,6 +246,8 @@ const MOTIVATION_OPTIONS: { id: MotivationType; label: string; icon: React.Compo
 
 export default function OnboardingPage() {
   const router = useRouter()
+  const [currentStep, setCurrentStep] = useState<number>(1)
+
   // Estado del usuario autenticado
   const [userId, setUserId] = useState<string | null>(null)
   const [userRole, setUserRole] = useState<'smoker' | 'friend'>('smoker')
