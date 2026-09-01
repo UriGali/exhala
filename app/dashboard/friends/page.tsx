@@ -32,7 +32,7 @@ import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
 import FriendChatModal from '@/components/FriendChatModal'
 import BottomNav from '@/components/BottomNav'
-import { getPushPermission, requestPushPermissionAndSubscribe } from '@/lib/push-notifications'
+import { getPushPermission, requestPushPermissionAndSubscribe, isPushSupported } from '@/lib/push-notifications'
 
 type TabView = 'friends' | 'requests'
 
