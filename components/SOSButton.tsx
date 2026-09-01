@@ -90,25 +90,29 @@ export default function SOSButton() {
       }
 
       if (currentUserId) {
-        // Fetch all friends connected to this smoker
+        // Fetch all friends connected to this smoker (bidirectional)
         const { data: friendships } = await supabase
           .from('friendships')
-          .select('friend_id')
-          .eq('smoker_id', currentUserId)
+          .select('friend_id, smoker_id')
+          .or(`smoker_id.eq.${currentUserId},friend_id.eq.${currentUserId}`)
+          .eq('status', 'accepted')
 
-        const count = friendships?.length ?? 0
-        setFriendCount(count)
+        const friendIds = (friendships || []).map((f) =>
+          f.smoker_id === currentUserId ? f.friend_id : f.smoker_id
+        )
+        const uniqueFriendIds = Array.from(new Set(friendIds))
+        setFriendCount(uniqueFriendIds.length)
 
-        if (friendships && friendships.length > 0) {
-          const notifications = friendships.map((f) => ({
+        if (uniqueFriendIds.length > 0) {
+          const notifications = uniqueFriendIds.map((targetId) => ({
             smoker_id: currentUserId,
-            friend_id: f.friend_id,
+            friend_id: targetId,
             message: `${currentUserName} necesita apoyo urgente. ¡Tiene un momento de antojo!`,
           }))
 
           await supabase.from('sos_notifications').insert(notifications)
 
-          // Disparar notificaciones Push Web a los navegadores de los amigos
+          // Disparar notificaciones Push Web reales a los móviles de los amigos
           try {
             await dispatchPushAlertToFriends(currentUserId, currentUserName)
           } catch (pushErr) {

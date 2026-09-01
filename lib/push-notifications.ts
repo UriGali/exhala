@@ -1,5 +1,9 @@
 import { supabase } from '@/lib/supabase/client'
 
+export const DEFAULT_VAPID_PUBLIC_KEY =
+  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ||
+  'BJPePg3ypQhbXqMu7luASzD-OTyUSjUq67jlA-kmBDpxO2mcGY7aPaekefQJ2pGeHN0htKe55cWMINoVFetJp-g'
+
 // Utility to convert ArrayBuffer to Base64
 function arrayBufferToBase64(buffer: ArrayBuffer | null): string {
   if (!buffer) return ''
@@ -27,7 +31,8 @@ export function isPushSupported(): boolean {
   return (
     typeof window !== 'undefined' &&
     'serviceWorker' in navigator &&
-    'Notification' in window
+    'Notification' in window &&
+    'PushManager' in window
   )
 }
 
@@ -38,7 +43,7 @@ export function getPushPermission(): NotificationPermission | 'unsupported' {
 
 /**
  * Register Service Worker and request browser push notification permission.
- * Saves the subscription keys (endpoint, p256dh, auth) to Supabase table push_subscriptions.
+ * Saves the real subscription keys (endpoint, p256dh, auth) to Supabase table push_subscriptions.
  */
 export async function requestPushPermissionAndSubscribe(
   userId: string
@@ -47,13 +52,13 @@ export async function requestPushPermissionAndSubscribe(
     return {
       success: false,
       permission: 'unsupported',
-      error: 'Tu navegador no soporta notificaciones push.',
+      error: 'Tu navegador o dispositivo no soporta notificaciones push.',
     }
   }
 
   try {
     // 1. Register Service Worker
-    const registration = await navigator.serviceWorker.register('/sw.js')
+    const registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' })
     await navigator.serviceWorker.ready
 
     // 2. Request Notification Permission
@@ -70,24 +75,20 @@ export async function requestPushPermissionAndSubscribe(
     let subscription = await registration.pushManager.getSubscription()
 
     if (!subscription) {
-      const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
-
       subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: vapidPublicKey ? urlBase64ToUint8Array(vapidPublicKey) : undefined,
+        applicationServerKey: urlBase64ToUint8Array(DEFAULT_VAPID_PUBLIC_KEY),
       })
     }
 
     // 4. Extract push credentials
-    const endpoint =
-      subscription?.endpoint ||
-      `https://push.exhala.app/browser/${userId}/${Date.now()}`
-    const p256dh = subscription
-      ? arrayBufferToBase64(subscription.getKey('p256dh'))
-      : 'browser-granted'
-    const auth = subscription
-      ? arrayBufferToBase64(subscription.getKey('auth'))
-      : 'browser-granted'
+    const endpoint = subscription.endpoint
+    const p256dh = arrayBufferToBase64(subscription.getKey('p256dh'))
+    const auth = arrayBufferToBase64(subscription.getKey('auth'))
+
+    if (!endpoint || !p256dh || !auth) {
+      throw new Error('No se pudieron obtener las credenciales de push del navegador.')
+    }
 
     // 5. Persist in Supabase push_subscriptions table
     const { error: dbError } = await supabase.from('push_subscriptions').upsert(
@@ -108,10 +109,10 @@ export async function requestPushPermissionAndSubscribe(
     if (Notification.permission === 'granted') {
       try {
         registration.showNotification('🌿 Exhala Conectado', {
-          body: 'Notificaciones activadas. Recibirás avisos urgentes cuando tus amigos lo necesiten.',
+          body: 'Notificaciones activadas. Recibirás avisos de tus amigos en tiempo real.',
           icon: '/favicon.ico',
         })
-      } catch { }
+      } catch {}
     }
 
     return { success: true, permission: 'granted' }
@@ -133,43 +134,35 @@ export async function dispatchPushAlertToFriends(
   userName: string
 ): Promise<{ success: boolean; dispatchedCount: number }> {
   try {
-    // 1. Fetch friend IDs
+    // 1. Fetch friend IDs (both smoker -> friend and friend -> smoker)
     const { data: friendships } = await supabase
       .from('friendships')
-      .select('friend_id')
-      .eq('smoker_id', userId)
+      .select('friend_id, smoker_id')
+      .or(`smoker_id.eq.${userId},friend_id.eq.${userId}`)
+      .eq('status', 'accepted')
 
     if (!friendships || friendships.length === 0) {
       return { success: true, dispatchedCount: 0 }
     }
 
-    const friendIds = friendships.map((f) => f.friend_id)
+    const friendIds = friendships.map((f) => (f.smoker_id === userId ? f.friend_id : f.smoker_id))
+    const uniqueFriendIds = Array.from(new Set(friendIds))
 
-    // 2. Fetch push subscriptions for these friends
-    const { data: subscriptions } = await supabase
-      .from('push_subscriptions')
-      .select('id, user_id, endpoint')
-      .in('user_id', friendIds)
+    // 2. Call server push dispatch endpoint
+    const response = await fetch('/api/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        friendIds: uniqueFriendIds,
+        title: '🚨 ¡Alerta SOS de Exhala!',
+        body: `${userName} necesita tu apoyo urgente en este momento. ¡Entra a animarle!`,
+        url: '/dashboard/friends',
+      }),
+    })
 
-    const dispatchedCount = subscriptions?.length ?? 0
+    const resData = await response.json().catch(() => ({}))
 
-    // 3. Call server push dispatch endpoint
-    try {
-      await fetch('/api/push/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          friendIds,
-          title: '🚨 ¡Alerta SOS de Exhala!',
-          body: `${userName} está teniendo un antojo fuerte ahora mismo. ¡Entra a darle tu apoyo!`,
-          url: '/dashboard/friends',
-        }),
-      })
-    } catch {
-      // Non-blocking fallback
-    }
-
-    return { success: true, dispatchedCount }
+    return { success: true, dispatchedCount: resData?.deliveredTo || uniqueFriendIds.length }
   } catch (err) {
     console.error('Error dispatching push alerts to friends:', err)
     return { success: false, dispatchedCount: 0 }
