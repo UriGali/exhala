@@ -24,12 +24,15 @@ import {
   Copy,
   CheckCheck,
   HeartHandshake,
+  Bell,
+  BellRing,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
 import FriendChatModal from '@/components/FriendChatModal'
 import BottomNav from '@/components/BottomNav'
+import { getPushPermission, requestPushPermissionAndSubscribe } from '@/lib/push-notifications'
 
 type TabView = 'friends' | 'requests'
 
@@ -173,6 +176,8 @@ export default function FriendsDashboard() {
 
   // Chat & Toast
   const [activeChatFriend, setActiveChatFriend] = useState<FriendItem | null>(null)
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({})
+  const [pushPermission, setPushPermission] = useState<string>('default')
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [processingId, setProcessingId] = useState<string | null>(null)
 
@@ -180,6 +185,56 @@ export default function FriendsDashboard() {
     setToastMessage(msg)
     setTimeout(() => setToastMessage(null), 3000)
   }, [])
+
+  // Cargar conteo de mensajes no leídos por amigo
+  const loadUnreadCounts = useCallback(async (currentUserId: string) => {
+    try {
+      const { data: unreadRows } = await supabase
+        .from('messages')
+        .select('sender_id')
+        .eq('receiver_id', currentUserId)
+        .is('read_at', null)
+
+      const counts: Record<string, number> = {}
+      unreadRows?.forEach((r) => {
+        counts[r.sender_id] = (counts[r.sender_id] || 0) + 1
+      })
+      setUnreadCounts(counts)
+    } catch (e) {
+      console.warn('Could not load unread message counts:', e)
+    }
+  }, [])
+
+  // Abrir chat y marcar mensajes de ese amigo como leídos
+  const handleOpenChat = async (friend: FriendItem) => {
+    setActiveChatFriend(friend)
+    setUnreadCounts((prev) => ({ ...prev, [friend.id]: 0 }))
+
+    if (userId && isValidUUID(friend.id)) {
+      try {
+        await supabase
+          .from('messages')
+          .update({ read_at: new Date().toISOString() })
+          .eq('sender_id', friend.id)
+          .eq('receiver_id', userId)
+          .is('read_at', null)
+      } catch (err) {
+        console.warn('Could not mark messages as read:', err)
+      }
+    }
+  }
+
+  // Activar Notificaciones Push directamente
+  const handleActivatePushNotification = async () => {
+    if (!userId) return
+    const res = await requestPushPermissionAndSubscribe(userId)
+    setPushPermission(res.permission)
+    if (res.success) {
+      showToast('🔔 ¡Notificaciones activadas en este dispositivo!')
+    } else {
+      showToast(res.error || 'No se pudieron activar las notificaciones.')
+    }
+  }
 
   // Cargar amistades reales y solicitudes desde Supabase
   const loadFriendsData = useCallback(async (currentUserId: string) => {
@@ -320,9 +375,11 @@ export default function FriendsDashboard() {
 
         if (profile) setUserProfile(profile)
 
+        setPushPermission(getPushPermission())
         await loadFriendsData(user.id)
+        await loadUnreadCounts(user.id)
 
-        // Escuchar mensajes entrantes en tiempo real para notificaciones globales
+        // Escuchar mensajes entrantes en tiempo real para notificaciones globales y contador rojo
         const inboxChannel = supabase
           .channel(`user-inbox-${user.id}`)
           .on(
@@ -337,6 +394,12 @@ export default function FriendsDashboard() {
               const newMsg = payload?.new
               if (!newMsg) return
 
+              // Incrementar contador no leído para el remitente
+              setUnreadCounts((prev) => ({
+                ...prev,
+                [newMsg.sender_id]: (prev[newMsg.sender_id] || 0) + 1,
+              }))
+
               // Obtener nombre del remitente si está disponible
               const { data: senderProfile } = await supabase
                 .from('profiles')
@@ -350,7 +413,13 @@ export default function FriendsDashboard() {
           )
           .subscribe()
 
+        // Sincronización continua de mensajes no leídos cada 3.5s
+        const unreadInterval = setInterval(() => {
+          loadUnreadCounts(user.id)
+        }, 3500)
+
         return () => {
+          clearInterval(unreadInterval)
           supabase.removeChannel(inboxChannel)
         }
       } catch (err) {
@@ -361,7 +430,7 @@ export default function FriendsDashboard() {
     }
 
     init()
-  }, [router, loadFriendsData, showToast])
+  }, [router, loadFriendsData, loadUnreadCounts, showToast])
 
   // Búsqueda por Nombre en tiempo real
   useEffect(() => {
@@ -601,6 +670,30 @@ export default function FriendsDashboard() {
           </button>
         </div>
 
+        {/* BANNER PARA ACTIVAR NOTIFICACIONES PUSH MÓVILES */}
+        {pushPermission !== 'granted' && isPushSupported() && (
+          <div className="bg-gradient-to-r from-emerald-950 to-neutral-900 text-white p-3.5 rounded-2xl flex items-center justify-between gap-3 shadow-sm animate-in fade-in duration-300 border border-emerald-800/40">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-emerald-800 text-emerald-300 flex items-center justify-center shrink-0">
+                <BellRing className="w-4 h-4 animate-bounce" />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-xs font-bold leading-tight">Activar Avisos en el Móvil</span>
+                <span className="text-[10px] text-emerald-200 truncate">
+                  Para enterarte de mensajes y alertas SOS al instante
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleActivatePushNotification}
+              className="px-3 py-1.5 bg-emerald-400 hover:bg-emerald-300 text-emerald-950 font-bold text-xs rounded-xl shrink-0 shadow-xs active:scale-95 transition-transform"
+            >
+              Activar
+            </button>
+          </div>
+        )}
+
         {/* PESTAÑAS SEGMENTADAS MÓVILES (AMIGOS VS SOLICITUDES) */}
         <div className="flex bg-neutral-200/60 p-1 rounded-2xl gap-1">
           <button
@@ -659,60 +752,76 @@ export default function FriendsDashboard() {
                   </div>
                 ) : (
                   <div className="space-y-3.5 pt-1">
-                    {quittingFriends.map((friend, idx) => (
-                      <div
-                        key={friend.friendshipId ? `friend-${friend.id}-${friend.friendshipId}` : `friend-${friend.id}-${idx}`}
-                        className="flex items-center justify-between group py-1 bg-neutral-50/50 hover:bg-neutral-50 rounded-2xl px-2.5 transition-colors"
-                      >
+                    {quittingFriends.map((friend, idx) => {
+                      const unread = unreadCounts[friend.id] || 0
+
+                      return (
                         <div
-                          onClick={() => setActiveChatFriend(friend)}
-                          className="flex items-center gap-3 flex-1 cursor-pointer min-w-0"
+                          key={friend.friendshipId ? `friend-${friend.id}-${friend.friendshipId}` : `friend-${friend.id}-${idx}`}
+                          className="flex items-center justify-between group py-1 bg-neutral-50/50 hover:bg-neutral-50 rounded-2xl px-2.5 transition-colors"
                         >
-                          {/* Avatar con iniciales */}
-                          <div className="relative shrink-0">
-                            <div
-                              className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold tracking-wider ${friend.avatarBg} ${friend.avatarText}`}
-                            >
-                              {friend.initials}
+                          <div
+                            onClick={() => handleOpenChat(friend)}
+                            className="flex items-center gap-3 flex-1 cursor-pointer min-w-0"
+                          >
+                            {/* Avatar con iniciales */}
+                            <div className="relative shrink-0">
+                              <div
+                                className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold tracking-wider ${friend.avatarBg} ${friend.avatarText}`}
+                              >
+                                {friend.initials}
+                              </div>
+                              <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full" />
                             </div>
-                            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full" />
+
+                            {/* Nombre, Estado y Badge de No Leídos */}
+                            <div className="flex flex-col min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm font-semibold text-neutral-950 leading-tight truncate">
+                                  {friend.name}
+                                </span>
+                                {unread > 0 && (
+                                  <span className="px-1.5 py-0.5 bg-rose-600 text-white text-[9px] font-black rounded-full shadow-xs animate-pulse">
+                                    {unread} {unread === 1 ? 'nuevo' : 'nuevos'}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-neutral-400 font-normal mt-0.5 truncate">
+                                {friend.status}
+                              </span>
+                            </div>
                           </div>
 
-                          {/* Nombre y Estado */}
-                          <div className="flex flex-col min-w-0">
-                            <span className="text-sm font-semibold text-neutral-950 leading-tight truncate">
-                              {friend.name}
-                            </span>
-                            <span className="text-[11px] text-neutral-400 font-normal mt-0.5 truncate">
-                              {friend.status}
-                            </span>
+                          {/* Botones de acción directos */}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Botón de Chat con badge rojo */}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenChat(friend)}
+                              className="relative w-8 h-8 rounded-full bg-white border border-neutral-200 text-neutral-600 hover:text-emerald-700 hover:border-emerald-300 flex items-center justify-center transition-all active:scale-90"
+                              title={`Chatear con ${friend.name}`}
+                            >
+                              <MessageCircle className="w-3.5 h-3.5 stroke-[2.2]" />
+                              {unread > 0 && (
+                                <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-600 text-white text-[9px] font-black rounded-full flex items-center justify-center border border-white shadow-xs">
+                                  {unread}
+                                </span>
+                              )}
+                            </button>
+
+                            {/* Botón de Riego */}
+                            <button
+                              type="button"
+                              onClick={() => handleToggleWater(friend)}
+                              className="w-8 h-8 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-700 hover:bg-emerald-100 flex items-center justify-center transition-all active:scale-90"
+                              title={`Regar planta de ${friend.name}`}
+                            >
+                              <Droplets className="w-3.5 h-3.5 fill-emerald-600/20 stroke-[2.2]" />
+                            </button>
                           </div>
                         </div>
-
-                        {/* Botones de acción directos */}
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          {/* Botón de Chat */}
-                          <button
-                            type="button"
-                            onClick={() => setActiveChatFriend(friend)}
-                            className="w-8 h-8 rounded-full bg-white border border-neutral-200 text-neutral-600 hover:text-emerald-700 hover:border-emerald-300 flex items-center justify-center transition-all active:scale-90"
-                            title={`Chatear con ${friend.name}`}
-                          >
-                            <MessageCircle className="w-3.5 h-3.5 stroke-[2.2]" />
-                          </button>
-
-                          {/* Botón de Riego */}
-                          <button
-                            type="button"
-                            onClick={() => handleToggleWater(friend)}
-                            className="w-8 h-8 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-700 hover:bg-emerald-100 flex items-center justify-center transition-all active:scale-90"
-                            title={`Regar planta de ${friend.name}`}
-                          >
-                            <Droplets className="w-3.5 h-3.5 fill-emerald-600/20 stroke-[2.2]" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </section>
@@ -731,47 +840,63 @@ export default function FriendsDashboard() {
                   </div>
                 ) : (
                   <div className="space-y-3.5 pt-1">
-                    {supportingFriends.map((supporter, idx) => (
-                      <div
-                        key={supporter.friendshipId ? `supporter-${supporter.id}-${supporter.friendshipId}` : `supporter-${supporter.id}-${idx}`}
-                        className="flex items-center justify-between group py-1 bg-neutral-50/50 hover:bg-neutral-50 rounded-2xl px-2.5 transition-colors"
-                      >
+                    {supportingFriends.map((supporter, idx) => {
+                      const unread = unreadCounts[supporter.id] || 0
+
+                      return (
                         <div
-                          onClick={() => setActiveChatFriend(supporter)}
-                          className="flex items-center gap-3 flex-1 cursor-pointer min-w-0"
+                          key={supporter.friendshipId ? `supporter-${supporter.id}-${supporter.friendshipId}` : `supporter-${supporter.id}-${idx}`}
+                          className="flex items-center justify-between group py-1 bg-neutral-50/50 hover:bg-neutral-50 rounded-2xl px-2.5 transition-colors"
                         >
                           <div
-                            className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold tracking-wider ${supporter.avatarBg} ${supporter.avatarText} shrink-0`}
+                            onClick={() => handleOpenChat(supporter)}
+                            className="flex items-center gap-3 flex-1 cursor-pointer min-w-0"
                           >
-                            {supporter.initials}
+                            <div
+                              className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold tracking-wider ${supporter.avatarBg} ${supporter.avatarText} shrink-0`}
+                            >
+                              {supporter.initials}
+                            </div>
+
+                            <div className="flex flex-col min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm font-semibold text-neutral-950 leading-tight truncate">
+                                  {supporter.name}
+                                </span>
+                                {unread > 0 && (
+                                  <span className="px-1.5 py-0.5 bg-rose-600 text-white text-[9px] font-black rounded-full shadow-xs animate-pulse">
+                                    {unread} {unread === 1 ? 'nuevo' : 'nuevos'}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-neutral-400 font-normal mt-0.5 truncate">
+                                {supporter.status}
+                              </span>
+                            </div>
                           </div>
 
-                          <div className="flex flex-col min-w-0">
-                            <span className="text-sm font-semibold text-neutral-950 leading-tight truncate">
-                              {supporter.name}
-                            </span>
-                            <span className="text-[11px] text-neutral-400 font-normal mt-0.5 truncate">
-                              {supporter.status}
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenChat(supporter)}
+                              className="relative w-8 h-8 rounded-full bg-white border border-neutral-200 text-neutral-600 hover:text-sky-700 hover:border-sky-300 flex items-center justify-center transition-all active:scale-90"
+                              title={`Chatear con ${supporter.name}`}
+                            >
+                              <MessageCircle className="w-3.5 h-3.5 stroke-[2.2]" />
+                              {unread > 0 && (
+                                <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-600 text-white text-[9px] font-black rounded-full flex items-center justify-center border border-white shadow-xs">
+                                  {unread}
+                                </span>
+                              )}
+                            </button>
+
+                            <span className="text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/70 px-2.5 py-0.5 rounded-full">
+                              Guardián
                             </span>
                           </div>
                         </div>
-
-                        <div className="flex items-center gap-2 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => setActiveChatFriend(supporter)}
-                            className="w-8 h-8 rounded-full bg-white border border-neutral-200 text-neutral-600 hover:text-sky-700 hover:border-sky-300 flex items-center justify-center transition-all active:scale-90"
-                            title={`Chatear con ${supporter.name}`}
-                          >
-                            <MessageCircle className="w-3.5 h-3.5 stroke-[2.2]" />
-                          </button>
-
-                          <span className="text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/70 px-2.5 py-0.5 rounded-full">
-                            Guardián
-                          </span>
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </section>
@@ -1119,7 +1244,10 @@ export default function FriendsDashboard() {
       )}
 
       {/* BARRA DE NAVEGACIÓN INFERIOR */}
-      <BottomNav currentTab="friends" />
+      <BottomNav
+        currentTab="friends"
+        unreadFriendsCount={Object.values(unreadCounts).reduce((a, b) => a + b, 0)}
+      />
     </div>
   )
 }

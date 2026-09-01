@@ -25,11 +25,13 @@ import {
   Sprout,
   TreePine,
   Leaf,
+  BellRing,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
 import BottomNav from '@/components/BottomNav'
+import { getPushPermission, requestPushPermissionAndSubscribe, isPushSupported } from '@/lib/push-notifications'
 
 // Props para la ilustración de la planta orgánica multi-fase
 interface OrganicPlantProps {
@@ -318,6 +320,9 @@ export default function SmokerDashboard() {
   const [breathTimer, setBreathTimer] = useState<number>(60)
   const [isBreathingActive, setIsBreathingActive] = useState<boolean>(false)
 
+  const [unreadCount, setUnreadCount] = useState<number>(0)
+  const [pushPermission, setPushPermission] = useState<string>('default')
+
   // Cargar usuario autenticado, perfil y riegos desde Supabase
   const loadUserData = useCallback(async () => {
     setLoadingProfile(true)
@@ -330,6 +335,17 @@ export default function SmokerDashboard() {
       }
 
       setUserId(user.id)
+      setPushPermission(getPushPermission())
+
+      // Consultar mensajes no leídos totales
+      try {
+        const { count: unreadMsgCount } = await supabase
+          .from('messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('receiver_id', user.id)
+          .is('read_at', null)
+        setUnreadCount(unreadMsgCount || 0)
+      } catch {}
 
       // Obtener perfil desde la tabla profiles
       const { data: userProfile, error: profileError } = await supabase
@@ -724,6 +740,38 @@ export default function SmokerDashboard() {
 
       {/* CONTENIDO CENTRAL */}
       <main className="flex-1 flex flex-col justify-around px-6 py-4 space-y-4">
+        {/* BANNER PARA ACTIVAR NOTIFICACIONES PUSH MÓVILES */}
+        {pushPermission !== 'granted' && isPushSupported() && (
+          <div className="bg-gradient-to-r from-emerald-950 to-neutral-900 text-white p-3.5 rounded-2xl flex items-center justify-between gap-3 shadow-sm animate-in fade-in duration-300 border border-emerald-800/40">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-emerald-800 text-emerald-300 flex items-center justify-center shrink-0">
+                <BellRing className="w-4 h-4 animate-bounce" />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-xs font-bold leading-tight">Activar Avisos en el Móvil</span>
+                <span className="text-[10px] text-emerald-200 truncate">
+                  Para recibir mensajes y alertas SOS de amigos
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                if (!userId) return
+                const res = await requestPushPermissionAndSubscribe(userId)
+                setPushPermission(res.permission)
+                if (res.success) {
+                  setToastMessage('🔔 ¡Notificaciones activadas en este dispositivo!')
+                  setTimeout(() => setToastMessage(null), 3000)
+                }
+              }}
+              className="px-3 py-1.5 bg-emerald-400 hover:bg-emerald-300 text-emerald-950 font-bold text-xs rounded-xl shrink-0 shadow-xs active:scale-95 transition-transform"
+            >
+              Activar
+            </button>
+          </div>
+        )}
+
         {/* MÉTRICA PRINCIPAL: DÍAS SIN FUMAR */}
         <section className="text-center my-1">
           <div className="flex items-baseline justify-center gap-1.5">
@@ -1044,7 +1092,7 @@ export default function SmokerDashboard() {
       )}
 
       {/* BARRA DE NAVEGACIÓN INFERIOR */}
-      <BottomNav currentTab="home" />
+      <BottomNav currentTab="home" unreadFriendsCount={unreadCount} />
     </div>
   )
 }

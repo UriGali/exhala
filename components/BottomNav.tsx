@@ -8,9 +8,10 @@ export type NavTab = 'home' | 'plant' | 'friends' | 'badges' | 'profile'
 
 interface BottomNavProps {
   currentTab: NavTab
+  unreadFriendsCount?: number
 }
 
-export default function BottomNav({ currentTab }: BottomNavProps) {
+export default function BottomNav({ currentTab, unreadFriendsCount = 0 }: BottomNavProps) {
   const navItems = [
     {
       id: 'home' as NavTab,
@@ -63,6 +64,11 @@ export default function BottomNav({ currentTab }: BottomNavProps) {
             >
               <div className="relative">
                 <Icon className={`w-5 h-5 transition-transform duration-200 ${isActive ? 'stroke-[2.4]' : 'stroke-[1.8]'}`} />
+                {item.id === 'friends' && unreadFriendsCount > 0 && (
+                  <span className="absolute -top-1 -right-2 min-w-3.5 h-3.5 px-1 bg-rose-600 text-white text-[8px] font-black rounded-full flex items-center justify-center border border-white shadow-xs animate-pulse">
+                    {unreadFriendsCount}
+                  </span>
+                )}
                 {isActive && (
                   <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-emerald-600 rounded-full animate-in fade-in zoom-in" />
                 )}

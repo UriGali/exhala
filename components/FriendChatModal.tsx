@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { X, Send, MessageCircle, Sparkles, HeartHandshake, Smile, CheckCheck } from 'lucide-react'
 import { supabase } from '@/lib/supabase/client'
 import { Message } from '@/types/database.types'
+import { dispatchPushMessageToFriend } from '@/lib/push-notifications'
 
 interface FriendInfo {
   id: string
@@ -264,18 +265,7 @@ export default function FriendChatModal({
         })
 
         // Dispatch Web Push notification to the receiver in background
-        try {
-          fetch('/api/push/send', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              friendIds: [friend.id],
-              title: `💬 Mensaje de ${currentUserName || 'tu amigo'}`,
-              body: content,
-              url: '/dashboard/friends',
-            }),
-          }).catch(() => {})
-        } catch {}
+        dispatchPushMessageToFriend(friend.id, currentUserName || 'Un amigo', content).catch(() => {})
       }
     } catch (err) {
       console.warn('Message kept in local state due to DB sync warning:', err)

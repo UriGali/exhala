@@ -148,10 +148,15 @@ export async function dispatchPushAlertToFriends(
     const friendIds = friendships.map((f) => (f.smoker_id === userId ? f.friend_id : f.smoker_id))
     const uniqueFriendIds = Array.from(new Set(friendIds))
 
+    const { data: { session } } = await supabase.auth.getSession()
+
     // 2. Call server push dispatch endpoint
     const response = await fetch('/api/push/send', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      },
       body: JSON.stringify({
         friendIds: uniqueFriendIds,
         title: '🚨 ¡Alerta SOS de Exhala!',
@@ -166,5 +171,38 @@ export async function dispatchPushAlertToFriends(
   } catch (err) {
     console.error('Error dispatching push alerts to friends:', err)
     return { success: false, dispatchedCount: 0 }
+  }
+}
+
+/**
+ * Dispatches Push Notification for a single chat message.
+ */
+export async function dispatchPushMessageToFriend(
+  friendId: string,
+  senderName: string,
+  messageContent: string
+): Promise<{ success: boolean }> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+
+    const response = await fetch('/api/push/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      },
+      body: JSON.stringify({
+        friendIds: [friendId],
+        title: `💬 Mensaje de ${senderName}`,
+        body: messageContent,
+        url: '/dashboard/friends',
+      }),
+    })
+
+    const data = await response.json().catch(() => ({}))
+    return { success: !!data?.success }
+  } catch (err) {
+    console.warn('Error dispatching chat push:', err)
+    return { success: false }
   }
 }
