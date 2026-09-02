@@ -125,12 +125,23 @@ export default function GroupChatModal({
               },
             ]
           })
+
+          if (typeof window !== 'undefined') {
+            localStorage.setItem(`last_read_group_${group.id}`, new Date().toISOString())
+          }
         }
       )
       .subscribe()
 
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(`last_read_group_${group.id}`, new Date().toISOString())
+    }
+
     return () => {
       isMounted = false
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(`last_read_group_${group.id}`, new Date().toISOString())
+      }
       supabase.removeChannel(channel)
     }
   }, [group.id])

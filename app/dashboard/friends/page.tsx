@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
@@ -191,8 +191,18 @@ export default function FriendsDashboard() {
   const [groupsList, setGroupsList] = useState<any[]>([])
   const [activeChatGroup, setActiveChatGroup] = useState<any | null>(null)
   const [showCreateGroupModal, setShowCreateGroupModal] = useState<boolean>(false)
+  const [unreadGroupCounts, setUnreadGroupCounts] = useState<Record<string, number>>({})
+  const activeChatGroupRef = useRef<any | null>(null)
+  useEffect(() => {
+    activeChatGroupRef.current = activeChatGroup
+  }, [activeChatGroup])
 
-  // Cargar grupos de chat
+  const totalUnreadInGroups = useMemo(
+    () => Object.values(unreadGroupCounts).reduce((acc, val) => acc + val, 0),
+    [unreadGroupCounts]
+  )
+
+  // Cargar grupos de chat y calcular mensajes no leídos
   const loadGroupsData = useCallback(async (currentUserId: string) => {
     try {
       const res = await fetch(`/api/groups?userId=${currentUserId}`)
@@ -200,12 +210,40 @@ export default function FriendsDashboard() {
         const data = await res.json()
         if (data.success && Array.isArray(data.groups)) {
           setGroupsList(data.groups)
+
+          // Calcular mensajes no leídos basados en localStorage
+          const unreadMap: Record<string, number> = {}
+          data.groups.forEach((grp: any) => {
+            if (grp.last_message && grp.last_message.sender_id !== currentUserId) {
+              const lastRead =
+                typeof window !== 'undefined'
+                  ? localStorage.getItem(`last_read_group_${grp.id}`)
+                  : null
+
+              if (!lastRead || new Date(grp.last_message.created_at) > new Date(lastRead)) {
+                unreadMap[grp.id] = 1
+              }
+            }
+          })
+          setUnreadGroupCounts(unreadMap)
         }
       }
     } catch (err) {
       console.warn('Error loading groups:', err)
     }
   }, [])
+
+  const handleOpenGroupChat = (grp: any) => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(`last_read_group_${grp.id}`, new Date().toISOString())
+    }
+    setUnreadGroupCounts((prev) => {
+      const updated = { ...prev }
+      delete updated[grp.id]
+      return updated
+    })
+    setActiveChatGroup(grp)
+  }
 
   // Historias de 24h
   const [storiesUsers, setStoriesUsers] = useState<UserStoriesGroup[]>([])
@@ -617,10 +655,58 @@ export default function FriendsDashboard() {
           )
           .subscribe()
 
+        // Realtime para mensajes de grupos
+        const groupChannelName = `user-groups-realtime-${user.id}-${Date.now()}`
+        const groupChannel = supabase
+          .channel(groupChannelName)
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'group_messages',
+            },
+            (payload: any) => {
+              const newMsg = payload?.new
+              if (!newMsg) return
+              if (newMsg.sender_id === user.id) return
+
+              if (activeChatGroupRef.current?.id === newMsg.group_id) {
+                if (typeof window !== 'undefined') {
+                  localStorage.setItem(`last_read_group_${newMsg.group_id}`, new Date().toISOString())
+                }
+                return
+              }
+
+              setUnreadGroupCounts((prev) => ({
+                ...prev,
+                [newMsg.group_id]: (prev[newMsg.group_id] || 0) + 1,
+              }))
+
+              setGroupsList((prev) =>
+                prev.map((g) =>
+                  g.id === newMsg.group_id
+                    ? {
+                        ...g,
+                        last_message: {
+                          content: newMsg.content,
+                          sender_name: 'Compañero',
+                          created_at: newMsg.created_at,
+                          sender_id: newMsg.sender_id,
+                        },
+                      }
+                    : g
+                )
+              )
+            }
+          )
+          .subscribe()
+
         const unreadInterval = setInterval(() => {
           if (typeof document !== 'undefined' && document.hidden) return
           loadUnreadCounts(user.id)
           loadStoriesData(user.id)
+          loadGroupsData(user.id)
         }, 10000)
 
         const handleFocus = () => {
@@ -1064,13 +1150,18 @@ export default function FriendsDashboard() {
           <button
             type="button"
             onClick={() => setCurrentTab('groups')}
-            className={`flex-1 text-center text-[12.5px] font-semibold py-[8px] px-0 rounded-[100px] flex items-center justify-center transition-all cursor-pointer ${
+            className={`flex-1 text-center text-[12.5px] font-semibold py-[8px] px-0 rounded-[100px] flex items-center justify-center gap-[5px] transition-all cursor-pointer ${
               currentTab === 'groups'
                 ? 'bg-[rgba(232,183,94,0.12)] text-[#E8B75E]'
                 : 'text-[#7C9481] hover:text-[#F1EEE2]'
             }`}
           >
             <span>Grupos</span>
+            {totalUnreadInGroups > 0 && (
+              <span className="bg-[#E8547C] text-white text-[10px] font-bold min-w-[16px] h-[16px] px-1 rounded-full flex items-center justify-center animate-pulse">
+                +{totalUnreadInGroups}
+              </span>
+            )}
           </button>
 
           <button
@@ -1396,31 +1487,41 @@ export default function FriendsDashboard() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {groupsList.map((grp) => (
-                    <div
-                      key={grp.id}
-                      onClick={() => setActiveChatGroup(grp)}
-                      className="rounded-[22px] border border-[rgba(232,183,94,0.14)] p-[14px_16px] bg-[rgba(255,255,255,0.025)] hover:border-[rgba(232,183,94,0.3)] transition-all cursor-pointer group shadow-sm flex flex-col gap-2.5"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#EFC471] to-[#E8B75E] text-[#2B1C08] flex items-center justify-center font-bold text-sm shrink-0 shadow-sm">
-                            👥
-                          </div>
-                          <div className="min-w-0">
-                            <h4 className="text-[14px] font-medium text-[#F1EEE2] truncate group-hover:text-[#E8B75E] transition-colors">
-                              {grp.name}
-                            </h4>
-                            <p className="text-[11px] text-[#7C9481]">
-                              {grp.member_count} {grp.member_count === 1 ? 'miembro' : 'miembros'}
-                            </p>
-                          </div>
-                        </div>
+                  {groupsList.map((grp) => {
+                    const unreadCount = unreadGroupCounts[grp.id] || 0
 
-                        <span className="text-[11px] font-semibold text-[#E8B75E] bg-[rgba(232,183,94,0.1)] border border-[rgba(232,183,94,0.22)] px-2.5 py-1 rounded-full shrink-0 group-hover:scale-105 transition-transform">
-                          Chatear
-                        </span>
-                      </div>
+                    return (
+                      <div
+                        key={grp.id}
+                        onClick={() => handleOpenGroupChat(grp)}
+                        className="rounded-[22px] border border-[rgba(232,183,94,0.14)] p-[14px_16px] bg-[rgba(255,255,255,0.025)] hover:border-[rgba(232,183,94,0.3)] transition-all cursor-pointer group shadow-sm flex flex-col gap-2.5"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#EFC471] to-[#E8B75E] text-[#2B1C08] flex items-center justify-center font-bold text-sm shrink-0 shadow-sm">
+                              👥
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <h4 className="text-[14px] font-medium text-[#F1EEE2] truncate group-hover:text-[#E8B75E] transition-colors">
+                                  {grp.name}
+                                </h4>
+                                {unreadCount > 0 && (
+                                  <span className="bg-[#E8547C] text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 shadow-sm animate-pulse">
+                                    +{unreadCount}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-[#7C9481]">
+                                {grp.member_count} {grp.member_count === 1 ? 'miembro' : 'miembros'}
+                              </p>
+                            </div>
+                          </div>
+
+                          <span className="text-[11px] font-semibold text-[#E8B75E] bg-[rgba(232,183,94,0.1)] border border-[rgba(232,183,94,0.22)] px-2.5 py-1 rounded-full shrink-0 group-hover:scale-105 transition-transform">
+                            Chatear
+                          </span>
+                        </div>
 
                       {grp.last_message ? (
                         <div className="p-2 rounded-xl bg-[rgba(0,0,0,0.2)] border border-[rgba(232,183,94,0.06)] text-[11.5px] text-[#A9BBA4] truncate">
@@ -1433,7 +1534,8 @@ export default function FriendsDashboard() {
                         </p>
                       ) : null}
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -1893,6 +1995,7 @@ export default function FriendsDashboard() {
           initialUserIndex={activeStoryUserIndex}
           usersWithStories={storiesUsers}
           currentUserId={userId}
+          currentUserName={userName}
           onClose={() => setActiveStoryUserIndex(null)}
           onSendCheer={(targetUserId, reaction) => {
             showToast(`✨ Reacción enviada a tu compañero: ${reaction}`)

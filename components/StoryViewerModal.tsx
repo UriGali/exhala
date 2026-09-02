@@ -1,8 +1,10 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Clock } from 'lucide-react'
+import { X, Clock, Send, Loader2 } from 'lucide-react'
 import confetti from 'canvas-confetti'
+import { supabase } from '@/lib/supabase/client'
+import { dispatchPushMessageToFriend } from '@/lib/push-notifications'
 
 export interface StoryItem {
   id: string
@@ -24,6 +26,7 @@ interface StoryViewerModalProps {
   initialUserIndex: number
   usersWithStories: UserStoriesGroup[]
   currentUserId: string | null
+  currentUserName?: string
   onClose: () => void
   onSendCheer?: (targetUserId: string, reaction: string) => void
 }
@@ -34,6 +37,7 @@ export default function StoryViewerModal({
   initialUserIndex,
   usersWithStories,
   currentUserId,
+  currentUserName,
   onClose,
   onSendCheer,
 }: StoryViewerModalProps) {
@@ -208,6 +212,81 @@ export default function StoryViewerModal({
     }
   }
 
+  // Estado para contestar abajo estilo Instagram y enviar directo al chat
+  const [replyText, setReplyText] = useState<string>('')
+  const [isSendingReply, setIsSendingReply] = useState<boolean>(false)
+  const isOwnStory = activeUser?.userId === currentUserId
+
+  const handleSendReply = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    if (!replyText.trim() || !currentUserId || !activeUser || isSendingReply) return
+
+    const messageContent = replyText.trim()
+    setIsSendingReply(true)
+
+    try {
+      // 1. Guardar en la tabla messages (chat directo con esa persona)
+      const { data: newMsg, error } = await supabase
+        .from('messages')
+        .insert({
+          sender_id: currentUserId,
+          receiver_id: activeUser.userId,
+          content: messageContent,
+        })
+        .select()
+        .single()
+
+      if (error) {
+        console.warn('Notice saving reply to direct chat:', error.message)
+      }
+
+      // 2. Notificación push al móvil de esa persona
+      dispatchPushMessageToFriend(
+        activeUser.userId,
+        currentUserName || 'Tu compañero',
+        messageContent
+      ).catch(() => {})
+
+      // 3. Emitir evento Realtime al canal del chat privado
+      const sortedIds = [currentUserId, activeUser.userId].sort()
+      const channelName = `chat-room-${sortedIds[0]}-${sortedIds[1]}`
+      const chatChannel = supabase.channel(channelName)
+      chatChannel
+        .send({
+          type: 'broadcast',
+          event: 'new_message',
+          payload: newMsg || {
+            id: 'msg-' + Date.now(),
+            sender_id: currentUserId,
+            receiver_id: activeUser.userId,
+            content: messageContent,
+            created_at: new Date().toISOString(),
+          },
+        })
+        .catch(() => {})
+
+      // 4. Confetti y feedback
+      try {
+        confetti({
+          particleCount: 25,
+          spread: 50,
+          origin: { y: 0.88 },
+          colors: ['#E8B75E', '#52B788', '#E8547C'],
+        })
+      } catch {}
+
+      setCheerFeedback(`💬 Mensaje enviado a ${activeUser.userName.split(' ')[0]}`)
+      setTimeout(() => setCheerFeedback(null), 2500)
+
+      setReplyText('')
+      resumeStory()
+    } catch (err) {
+      console.error('Error sending story reply:', err)
+    } finally {
+      setIsSendingReply(false)
+    }
+  }
+
   if (!activeUser || !currentStory) return null
 
   const { timeAgo, remaining } = getTimeLabels(currentStory.createdAt, currentStory.expiresAt)
@@ -377,44 +456,85 @@ export default function StoryViewerModal({
         )}
 
         {/* ============================================================== */}
-        {/* BARRA DE REACCIONES RÁPIDAS                                    */}
+        {/* BARRA DE RESPUESTA DIRECTA AL CHAT (ESTILO INSTAGRAM)         */}
         {/* ============================================================== */}
-        <footer className="relative z-20 p-3 pt-1 border-t border-white/10 bg-black/40 backdrop-blur-md flex items-center justify-around gap-2 pointer-events-auto">
-          <button
-            type="button"
-            onClick={() => handleReaction('💧', 'Vitalidad')}
-            className="flex items-center gap-1.5 py-2 px-3 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 transition-all text-xs text-white border border-white/10 cursor-pointer"
-          >
-            <span className="text-base">💧</span>
-            <span className="font-medium">Nutrir</span>
-          </button>
+        <footer className="relative z-20 p-3 pt-2 pb-4 border-t border-white/10 bg-black/60 backdrop-blur-lg pointer-events-auto">
+          {isOwnStory ? (
+            <div className="flex items-center justify-between text-xs text-[#A9BBA4] px-2 py-1">
+              <span className="font-medium text-[#E8B75E]">Tu historia</span>
+              <span className="text-[11px] text-[#7C9481]">Visible para tus amigos por 24h</span>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <form
+                onSubmit={handleSendReply}
+                className="flex items-center gap-2"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    onFocus={() => {
+                      pauseStory()
+                    }}
+                    onBlur={() => {
+                      if (!replyText) resumeStory()
+                    }}
+                    placeholder={`Responder a ${activeUser.userName.split(' ')[0]}...`}
+                    maxLength={300}
+                    className="w-full h-10 pl-4 pr-10 rounded-full bg-white/15 border border-white/20 text-white text-[13px] placeholder:text-white/60 focus:outline-none focus:border-[#E8B75E] focus:bg-white/20 transition-all shadow-inner"
+                  />
+                  {replyText.trim().length > 0 && (
+                    <button
+                      type="submit"
+                      disabled={isSendingReply}
+                      className="absolute right-1.5 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-gradient-to-r from-[#EFC471] to-[#E8B75E] text-[#1B1710] flex items-center justify-center cursor-pointer transition-transform hover:scale-105 active:scale-95 shadow-sm disabled:opacity-50"
+                    >
+                      {isSendingReply ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Send className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  )}
+                </div>
 
-          <button
-            type="button"
-            onClick={() => handleReaction('💪', 'Fuerza')}
-            className="flex items-center gap-1.5 py-2 px-3 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 transition-all text-xs text-white border border-white/10 cursor-pointer"
-          >
-            <span className="text-base">💪</span>
-            <span className="font-medium">Ánimo</span>
-          </button>
+                {/* Botón de reacción rápida corazón si no está escribiendo */}
+                {replyText.trim().length === 0 && (
+                  <button
+                    type="button"
+                    onClick={() => handleReaction('❤️', 'Apoyo')}
+                    className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all flex items-center justify-center text-lg text-white border border-white/15 shrink-0 cursor-pointer"
+                    title="Enviar apoyo rápido"
+                  >
+                    ❤️
+                  </button>
+                )}
+              </form>
 
-          <button
-            type="button"
-            onClick={() => handleReaction('🌿', 'Limpio')}
-            className="flex items-center gap-1.5 py-2 px-3 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 transition-all text-xs text-white border border-white/10 cursor-pointer"
-          >
-            <span className="text-base">🌿</span>
-            <span className="font-medium">Limpio</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handleReaction('❤️', 'Apoyo')}
-            className="flex items-center gap-1.5 py-2 px-3 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 transition-all text-xs text-white border border-white/10 cursor-pointer"
-          >
-            <span className="text-base">❤️</span>
-            <span className="font-medium">Apoyo</span>
-          </button>
+              {/* Reacciones rápidas */}
+              <div className="flex items-center justify-between gap-1.5 px-1">
+                {[
+                  { emoji: '💧', label: 'Nutrir' },
+                  { emoji: '💪', label: 'Ánimo' },
+                  { emoji: '🌿', label: 'Limpio' },
+                  { emoji: '🔥', label: 'Fuego' },
+                ].map((reac) => (
+                  <button
+                    key={reac.emoji}
+                    type="button"
+                    onClick={() => handleReaction(reac.emoji, reac.label)}
+                    className="flex-1 py-1 rounded-full bg-white/5 hover:bg-white/15 active:scale-95 transition-all text-[11px] text-white/80 border border-white/5 flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <span>{reac.emoji}</span>
+                    <span className="text-[10px] hidden xs:inline">{reac.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </footer>
       </div>
     </div>
