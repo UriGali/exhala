@@ -206,7 +206,7 @@ export default function ProfilePage() {
       setPushPermission(result.permission)
 
       if (result.success) {
-        setPushFeedback('¡Notificaciones activas! Recibirás alertas SOS de tus amigos.')
+        setPushFeedback('¡Todas las notificaciones activadas con éxito! Recibirás avisos de historias, grupos, mensajes y SOS.')
       } else {
         setPushFeedback(result.error || 'No se pudieron activar las notificaciones.')
       }
@@ -450,43 +450,93 @@ export default function ProfilePage() {
             </div>
           )}
 
-          {/* TARJETA: NOTIFICACIONES PUSH */}
+          {/* TARJETA: TODAS LAS NOTIFICACIONES EN TIEMPO REAL */}
           <div
-            className="rounded-[22px] p-[16px] border border-[rgba(232,183,94,0.12)] space-y-3"
+            className="rounded-[24px] p-[18px] border border-[rgba(232,183,94,0.16)] space-y-3.5 shadow-lg relative overflow-hidden"
             style={{
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))',
+              background: 'radial-gradient(120% 90% at 50% -10%, rgba(232,183,94,0.08) 0%, rgba(22,36,28,0.6) 60%, rgba(15,25,19,0.85) 100%)',
             }}
           >
-            <div className="flex items-center justify-between pb-2 border-b border-[rgba(232,183,94,0.08)]">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-[#7C9481]">
-                Avisos de Emergencia SOS
-              </span>
-              <Bell className="w-3.5 h-3.5 text-[#E8B75E]" />
+            <div className="flex items-center justify-between pb-2.5 border-b border-[rgba(232,183,94,0.1)]">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-[rgba(232,183,94,0.14)] border border-[rgba(232,183,94,0.25)] flex items-center justify-center text-[#E8B75E]">
+                  <Bell className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <span className="text-[12.5px] font-semibold text-[#F1EEE2]">
+                    Notificaciones en Tiempo Real
+                  </span>
+                  <p className="text-[10px] text-[#7C9481]">
+                    Avisos en tu dispositivo
+                  </p>
+                </div>
+              </div>
+
+              {pushPermission === 'granted' ? (
+                <span className="flex items-center gap-1.5 text-[10px] font-semibold text-emerald-300 bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  ACTIVAS
+                </span>
+              ) : (
+                <span className="text-[10px] font-semibold text-[#E8B75E] bg-[rgba(232,183,94,0.12)] border border-[rgba(232,183,94,0.25)] px-2 py-0.5 rounded-full">
+                  SIN ACTIVAR
+                </span>
+              )}
             </div>
 
             <p className="text-[12px] text-[#A9BBA4] leading-relaxed">
-              Recibe notificaciones en este dispositivo cuando tus compañeros activen el botón SOS o rieguen tu jardín.
+              Recibe avisos instantáneos cuando tus amigos suban una historia, hablen en tus grupos, te añadan a un grupo, rieguen tu jardín o pulsen el botón SOS.
             </p>
 
+            {/* CHIPS DE ALERTAS INCLUIDAS */}
+            <div className="grid grid-cols-2 gap-1.5 py-0.5">
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-black/25 border border-white/5 text-[11px] text-[#D8E2D5]">
+                <span>📸</span>
+                <span className="truncate">Historias de amigos</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-black/25 border border-white/5 text-[11px] text-[#D8E2D5]">
+                <span>👥</span>
+                <span className="truncate">Nuevos grupos y chats</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-black/25 border border-white/5 text-[11px] text-[#D8E2D5]">
+                <span>🚨</span>
+                <span className="truncate">Alertas de crisis SOS</span>
+              </div>
+              <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-black/25 border border-white/5 text-[11px] text-[#D8E2D5]">
+                <span>💧</span>
+                <span className="truncate">Riegos en tu jardín</span>
+              </div>
+            </div>
+
             {pushFeedback && (
-              <p className="text-xs px-3 py-2 rounded-xl bg-[rgba(232,183,94,0.1)] text-[#E8B75E] border border-[rgba(232,183,94,0.2)]">
-                {pushFeedback}
+              <p className="text-xs px-3 py-2 rounded-xl bg-[rgba(232,183,94,0.1)] text-[#E8B75E] border border-[rgba(232,183,94,0.2)] flex items-center gap-2">
+                <Sparkles className="w-3.5 h-3.5 shrink-0 text-[#E8B75E]" />
+                <span>{pushFeedback}</span>
               </p>
             )}
 
             {pushPermission === 'granted' ? (
-              <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/30 rounded-xl px-3.5 py-2.5">
-                <div className="flex items-center gap-2 text-xs text-emerald-300 font-medium">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>Avisos web activos</span>
+              <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-300 shrink-0">
+                    <Check className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-xs text-emerald-300 font-semibold block">
+                      Dispositivo sincronizado
+                    </span>
+                    <span className="text-[10.5px] text-[#7C9481]">
+                      Recibirás todas las alertas en segundo plano
+                    </span>
+                  </div>
                 </div>
                 <button
                   type="button"
                   onClick={handleActivatePush}
                   disabled={isActivatingPush}
-                  className="text-[11px] text-[#E8B75E] underline hover:text-[#F1EEE2] cursor-pointer"
+                  className="px-2.5 py-1.5 rounded-lg bg-[rgba(232,183,94,0.12)] hover:bg-[rgba(232,183,94,0.2)] border border-[rgba(232,183,94,0.25)] text-[11px] text-[#E8B75E] font-medium transition-all cursor-pointer shrink-0"
                 >
-                  Actualizar
+                  {isActivatingPush ? 'Actualizando...' : 'Comprobar'}
                 </button>
               </div>
             ) : (
@@ -494,17 +544,19 @@ export default function ProfilePage() {
                 type="button"
                 onClick={handleActivatePush}
                 disabled={isActivatingPush}
-                className="w-full py-2.5 bg-[rgba(232,183,94,0.15)] hover:bg-[rgba(232,183,94,0.25)] border border-[rgba(232,183,94,0.3)] text-[#E8B75E] text-xs font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer"
+                className="w-full py-3.5 px-4 bg-gradient-to-r from-[#E8B75E] via-[#F3CE7A] to-[#E8B75E] hover:from-[#E8B75E]/95 hover:to-[#F3CE7A]/95 text-[#1B1710] font-semibold text-[13px] rounded-2xl flex items-center justify-center gap-2.5 shadow-[0_6px_20px_rgba(232,183,94,0.28)] hover:shadow-[0_8px_25px_rgba(232,183,94,0.38)] active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50"
               >
                 {isActivatingPush ? (
                   <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Conectando...</span>
+                    <Loader2 className="w-4 h-4 animate-spin text-[#1B1710]" />
+                    <span>Activando avisos...</span>
                   </>
                 ) : (
                   <>
-                    <BellRing className="w-3.5 h-3.5" />
-                    <span>Activar avisos en este móvil</span>
+                    <div className="w-6 h-6 rounded-full bg-[#1B1710]/15 flex items-center justify-center">
+                      <BellRing className="w-3.5 h-3.5 text-[#1B1710]" />
+                    </div>
+                    <span>Activar todas las notificaciones</span>
                   </>
                 )}
               </button>
