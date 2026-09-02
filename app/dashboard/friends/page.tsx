@@ -213,7 +213,12 @@ export default function FriendsDashboard() {
   const [initialStoryImage, setInitialStoryImage] = useState<string | null>(null)
   const [activeStoryUserIndex, setActiveStoryUserIndex] = useState<number | null>(null)
 
-  // Cargar historias de amigos y propias
+  const storiesUsersRef = useRef<UserStoriesGroup[]>([])
+  useEffect(() => {
+    storiesUsersRef.current = storiesUsers
+  }, [storiesUsers])
+
+  // Cargar historias de amigos y propias con optimización de renders
   const loadStoriesData = useCallback(async (currentUserId: string) => {
     try {
       const { data: sessionData } = await supabase.auth.getSession()
@@ -225,7 +230,11 @@ export default function FriendsDashboard() {
       if (res.ok) {
         const data = await res.json()
         if (data.success && Array.isArray(data.users)) {
-          setStoriesUsers(data.users)
+          const prevStr = JSON.stringify(storiesUsersRef.current)
+          const nextStr = JSON.stringify(data.users)
+          if (prevStr !== nextStr) {
+            setStoriesUsers(data.users)
+          }
         }
       }
     } catch (err) {
@@ -609,9 +618,10 @@ export default function FriendsDashboard() {
           .subscribe()
 
         const unreadInterval = setInterval(() => {
+          if (typeof document !== 'undefined' && document.hidden) return
           loadUnreadCounts(user.id)
           loadStoriesData(user.id)
-        }, 5000)
+        }, 10000)
 
         const handleFocus = () => {
           loadStoriesData(user.id)
