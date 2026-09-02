@@ -230,6 +230,12 @@ export default function NotificationsPage() {
 
         await loadNotifications(user.id)
 
+        // Marcar notificaciones como leídas en esta sesión
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('last_read_notifications_at', new Date().toISOString())
+          window.dispatchEvent(new Event('notifications_read'))
+        }
+
         // Realtime listener: Escuchar nuevos riegos y alertas SOS en tiempo real
         const channelName = `user-notifications-${user.id}-${Date.now()}`
         channel = supabase

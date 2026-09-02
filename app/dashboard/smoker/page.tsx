@@ -302,6 +302,7 @@ export default function SmokerDashboard() {
   const [isWateringActive, setIsWateringActive] = useState<boolean>(false)
   const [isWateringAnim, setIsWateringAnim] = useState<boolean>(false)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0)
 
   // Formulario de configuración inicial / perfil
   const [formFullName, setFormFullName] = useState<string>('')
@@ -419,6 +420,99 @@ export default function SmokerDashboard() {
   useEffect(() => {
     loadUserData()
   }, [loadUserData])
+
+  // Comprobar notificaciones no leídas
+  const checkUnreadNotifications = useCallback(async (currentUserId: string) => {
+    try {
+      const lastRead =
+        typeof window !== 'undefined'
+          ? localStorage.getItem('last_read_notifications_at') ||
+            new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+          : new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+
+      const { count: unreadWater } = await supabase
+        .from('plant_actions')
+        .select('id', { count: 'exact', head: true })
+        .eq('smoker_id', currentUserId)
+        .neq('friend_id', currentUserId)
+        .gt('created_at', lastRead)
+
+      const { count: unreadSos } = await supabase
+        .from('sos_notifications')
+        .select('id', { count: 'exact', head: true })
+        .eq('friend_id', currentUserId)
+        .gt('created_at', lastRead)
+
+      const total = (unreadWater || 0) + (unreadSos || 0)
+      setUnreadNotificationsCount(total)
+    } catch (err) {
+      console.warn('Error checking unread notifications:', err)
+    }
+  }, [])
+
+  // Suscripción Realtime para notificaciones no leídas y badge
+  useEffect(() => {
+    if (!userId) return
+
+    checkUnreadNotifications(userId)
+
+    const handleRead = () => setUnreadNotificationsCount(0)
+    window.addEventListener('notifications_read', handleRead)
+    window.addEventListener('storage', handleRead)
+
+    const channelName = `smoker-page-notifications-${userId}-${Date.now()}`
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'plant_actions',
+          filter: `smoker_id=eq.${userId}`,
+        },
+        async (payload: any) => {
+          const newAction = payload?.new
+          if (!newAction || newAction.friend_id === userId) return
+          setUnreadNotificationsCount((prev) => prev + 1)
+          const { data: friendProfile } = await supabase
+            .from('profiles')
+            .select('full_name')
+            .eq('id', newAction.friend_id)
+            .maybeSingle()
+          const friendName = friendProfile?.full_name?.split(' ')[0] || 'Un amigo'
+          setToastMessage(`💧 ¡${friendName} acaba de regar tu planta! (+1 vitalidad)`)
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'sos_notifications',
+          filter: `friend_id=eq.${userId}`,
+        },
+        async (payload: any) => {
+          const newSos = payload?.new
+          if (!newSos) return
+          setUnreadNotificationsCount((prev) => prev + 1)
+          const { data: smokerProfile } = await supabase
+            .from('profiles')
+            .select('full_name')
+            .eq('id', newSos.smoker_id)
+            .maybeSingle()
+          const smokerName = smokerProfile?.full_name?.split(' ')[0] || 'Un compañero'
+          setToastMessage(`🚨 ¡Alerta SOS de ${smokerName}!`)
+        }
+      )
+      .subscribe()
+
+    return () => {
+      window.removeEventListener('notifications_read', handleRead)
+      window.removeEventListener('storage', handleRead)
+      supabase.removeChannel(channel)
+    }
+  }, [userId, checkUnreadNotifications])
 
   // Timer de 12h cuenta regresiva
   useEffect(() => {
@@ -756,11 +850,22 @@ export default function SmokerDashboard() {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => router.push('/dashboard/notifications')}
-            className="w-8 h-8 rounded-full bg-neutral-100 text-neutral-600 hover:text-neutral-950 flex items-center justify-center transition-colors shadow-2xs"
+            onClick={() => {
+              if (typeof window !== 'undefined') {
+                localStorage.setItem('last_read_notifications_at', new Date().toISOString())
+              }
+              setUnreadNotificationsCount(0)
+              router.push('/dashboard/notifications')
+            }}
+            className="relative w-8 h-8 rounded-full bg-neutral-100 text-neutral-600 hover:text-neutral-950 flex items-center justify-center transition-colors shadow-2xs"
             title="Ver notificaciones de riegos y alertas"
           >
             <Bell className="w-4 h-4" />
+            {unreadNotificationsCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-3.5 h-3.5 px-0.5 bg-rose-500 text-white text-[8px] font-extrabold rounded-full flex items-center justify-center border-2 border-white shadow-xs animate-pulse">
+                {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
+              </span>
+            )}
           </button>
 
           <button
