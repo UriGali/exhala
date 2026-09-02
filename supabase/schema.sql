@@ -306,20 +306,22 @@ CREATE POLICY "Smokers and friends can view plant actions"
     USING (
         auth.uid() = smoker_id
         OR auth.uid() = friend_id
+        OR EXISTS (
+            SELECT 1 FROM public.friendships
+            WHERE ((public.friendships.smoker_id = public.plant_actions.smoker_id AND public.friendships.friend_id = auth.uid())
+                OR (public.friendships.friend_id = public.plant_actions.smoker_id AND public.friendships.smoker_id = auth.uid()))
+              AND public.friendships.status = 'accepted'
+        )
     );
 
--- Friends can insert plant actions only if an active friendship exists
+-- Authenticated users can insert plant actions when performing the action (friend_id) or owner (smoker_id)
 CREATE POLICY "Friends can insert plant actions"
     ON public.plant_actions
     FOR INSERT
     TO authenticated
     WITH CHECK (
         auth.uid() = friend_id
-        AND EXISTS (
-            SELECT 1 FROM public.friendships
-            WHERE public.friendships.smoker_id = public.plant_actions.smoker_id
-              AND public.friendships.friend_id = auth.uid()
-        )
+        OR auth.uid() = smoker_id
     );
 
 -- ==============================================================================

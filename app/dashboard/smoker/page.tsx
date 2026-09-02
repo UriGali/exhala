@@ -25,6 +25,7 @@ import {
   Sprout,
   TreePine,
   Leaf,
+  Bell,
   BellRing,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
@@ -472,15 +473,34 @@ export default function SmokerDashboard() {
     try {
       const nowIso = new Date().toISOString()
 
-      // Registrar en Supabase tras iniciar el vertido de agua
-      const { error } = await supabase.from('plant_actions').insert({
+      // Registrar en Supabase con fallback a endpoint de servidor si RLS falla
+      const { error: insertError } = await supabase.from('plant_actions').insert({
         smoker_id: userId,
         friend_id: userId,
         action_type: 'water',
         created_at: nowIso,
       })
 
-      if (error) throw error
+      if (insertError) {
+        const { data: { session } } = await supabase.auth.getSession()
+        const apiRes = await fetch('/api/plant/water', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
+          body: JSON.stringify({
+            smoker_id: userId,
+            friend_id: userId,
+            action_type: 'water',
+          }),
+        })
+
+        const apiData = await apiRes.json().catch(() => ({}))
+        if (!apiData.success) {
+          throw new Error(apiData.error || insertError.message)
+        }
+      }
 
       // Sincronizar el destello de absorción a los 1100ms
       setTimeout(() => {
@@ -511,8 +531,14 @@ export default function SmokerDashboard() {
       setTimeout(() => {
         setToastMessage(null)
       }, 3800)
-    } catch (err) {
-      console.error('Error watering plant:', err)
+    } catch (err: any) {
+      console.error(
+        'Error watering plant:',
+        err?.message || err,
+        'Details:',
+        err?.details || err?.hint || err?.code || '',
+        JSON.stringify(err, Object.getOwnPropertyNames(err))
+      )
       setIsWateringAnim(false)
       setIsWateringActive(false)
     }
@@ -726,8 +752,17 @@ export default function SmokerDashboard() {
           </div>
         </div>
 
-        {/* Botón Configuración / Indicador de Racha */}
+        {/* Botón Notificaciones / Configuración / Indicador de Racha */}
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => router.push('/dashboard/notifications')}
+            className="w-8 h-8 rounded-full bg-neutral-100 text-neutral-600 hover:text-neutral-950 flex items-center justify-center transition-colors shadow-2xs"
+            title="Ver notificaciones de riegos y alertas"
+          >
+            <Bell className="w-4 h-4" />
+          </button>
+
           <button
             type="button"
             onClick={() => setShowConfigModal(true)}

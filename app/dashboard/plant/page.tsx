@@ -1,8 +1,7 @@
 'use client'
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
-import Image from 'next/image'
+import React, { useState, useEffect, useMemo, useCallback, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Sprout,
   Droplets,
@@ -14,9 +13,6 @@ import {
   Lock,
   ChevronRight,
   Info,
-  Sliders,
-  Share2,
-  X,
   HeartPulse,
   Award,
   Wind,
@@ -25,6 +21,9 @@ import {
   Check,
   Users,
   UserPlus,
+  Bell,
+  X,
+  MessageCircle,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
@@ -34,14 +33,16 @@ import GardenPlantVisualizer, { PLANT_SPECIES, PlantSpecies } from '@/components
 
 type PlantTab = 'active' | 'garden'
 
-interface SupportedFriendGarden {
+interface FriendGardenData {
   id: string
   name: string
   initials: string
+  role: 'smoker' | 'friend'
   avatarBg: string
   avatarText: string
   totalWaterings: number
   lastWateredAt: string | null
+  smokeFreeSince?: string | null
 }
 
 const AVATAR_PALETTES = [
@@ -64,44 +65,59 @@ function getInitials(name: string) {
   return name.slice(0, 2).toUpperCase()
 }
 
-export default function PlantPage() {
+function getDaysClean(smokeFreeSince?: string | null): number {
+  if (!smokeFreeSince) return 0
+  const diff = Date.now() - new Date(smokeFreeSince).getTime()
+  return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)))
+}
+
+function PlantPageContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialFriendParam = searchParams.get('friendId')
+  const isDebugParam = searchParams.get('debug') === 'true'
+
   const [activeTab, setActiveTab] = useState<PlantTab>('active')
 
-  // Estado del usuario y datos
+  // Estado del usuario
   const [userId, setUserId] = useState<string | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState<boolean>(true)
 
-  // Datos para Guardián (amigos apoyados)
-  const [supportedFriends, setSupportedFriends] = useState<SupportedFriendGarden[]>([])
-  const [selectedFriendIndex, setSelectedFriendIndex] = useState<number>(0)
+  // Selección de jardín: 'me' o el ID de un amigo
+  const [selectedGardenId, setSelectedGardenId] = useState<string>('me')
 
-  // Sistema de riego para fumador
-  const [totalWaterings, setTotalWaterings] = useState<number>(0)
-  const [lastWateredAt, setLastWateredAt] = useState<string | null>(null)
+  // Datos del propio usuario
+  const [myWaterings, setMyWaterings] = useState<number>(0)
+  const [myLastWateredAt, setMyLastWateredAt] = useState<string | null>(null)
   const [timeRemainingSeconds, setTimeRemainingSeconds] = useState<number>(0)
+
+  // Lista de amigos conectados con métricas de jardín
+  const [friendsGardens, setFriendsGardens] = useState<FriendGardenData[]>([])
+
+  // Feedback y animaciones
   const [isWateringActive, setIsWateringActive] = useState<boolean>(false)
   const [isWateringAnim, setIsWateringAnim] = useState<boolean>(false)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
 
-  // Modo interactivo / Demo slider para previsualizar todas las etapas
-  const [isDemoMode, setIsDemoMode] = useState<boolean>(false)
-  const [demoStage, setDemoStage] = useState<number>(0)
-  const [demoSpeciesIndex, setDemoSpeciesIndex] = useState<number>(0)
+  // Modal para ver información de la especie (Lore & Beneficios de salud bajo demanda)
+  const [showSpeciesInfo, setShowSpeciesInfo] = useState<boolean>(false)
 
-  // Modal para inspeccionar planta del jardín
+  // Modal para inspeccionar planta de la colección
   const [inspectedPlant, setInspectedPlant] = useState<{
     species: PlantSpecies
     speciesIndex: number
     isHarvested: boolean
     wateringsCompleted: number
-    harvestDate?: string
   } | null>(null)
+
+  // Modo debug oculto
+  const [demoStage, setDemoStage] = useState<number>(0)
+  const [isDemoActive, setIsDemoActive] = useState<boolean>(false)
 
   const isGuardian = profile?.role === 'friend'
 
-  // Cargar perfil y datos de plantas
+  // Cargar datos del usuario y amigos
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
@@ -127,74 +143,89 @@ export default function PlantPage() {
       if (userProfile) {
         setProfile(userProfile)
 
-        if (userProfile.role === 'friend') {
-          // --- MODO GUARDIÁN: Cargar plantas y jardines de los amigos apoyados ---
-          const { data: friendships } = await supabase
-            .from('friendships')
-            .select(`
-              smoker_id,
-              smoker:profiles!friendships_smoker_id_fkey(id, full_name, role, smoke_free_since)
-            `)
-            .eq('friend_id', user.id)
-            .eq('status', 'accepted')
+        // 1. Cargar historial propio de riegos
+        const { data: myActions, count: myCount } = await supabase
+          .from('plant_actions')
+          .select('created_at', { count: 'exact' })
+          .eq('smoker_id', user.id)
+          .eq('action_type', 'water')
+          .order('created_at', { ascending: false })
 
-          if (friendships && friendships.length > 0) {
-            const friendsData: SupportedFriendGarden[] = []
+        const totalMyWaterings = myCount || 0
+        setMyWaterings(totalMyWaterings)
 
-            for (const f of friendships) {
-              const smoker = (f as any).smoker
-              if (!smoker || !smoker.id) continue
-
-              const { count: waterCount, data: lastWater } = await supabase
-                .from('plant_actions')
-                .select('created_at', { count: 'exact' })
-                .eq('smoker_id', smoker.id)
-                .eq('action_type', 'water')
-                .order('created_at', { ascending: false })
-                .limit(1)
-
-              const name = smoker.full_name || 'Compañero'
-              const color = getAvatarColor(name)
-              const initials = getInitials(name)
-
-              friendsData.push({
-                id: smoker.id,
-                name,
-                initials,
-                avatarBg: color.bg,
-                avatarText: color.text,
-                totalWaterings: waterCount || 0,
-                lastWateredAt: lastWater?.[0]?.created_at || null,
-              })
-            }
-
-            setSupportedFriends(friendsData)
-          }
-        } else {
-          // --- MODO FUMADOR: Cargar su propio historial de riegos ---
-          const { data: waterActions, count } = await supabase
-            .from('plant_actions')
-            .select('created_at', { count: 'exact' })
-            .eq('smoker_id', user.id)
-            .eq('action_type', 'water')
-            .order('created_at', { ascending: false })
-
-          const total = count || 0
-          setTotalWaterings(total)
-
-          if (waterActions && waterActions.length > 0) {
-            const lastDate = waterActions[0].created_at
-            setLastWateredAt(lastDate)
-            const diffMs = Date.now() - new Date(lastDate).getTime()
-            const twelveHoursMs = 12 * 60 * 60 * 1000
-            if (diffMs < twelveHoursMs) {
-              setTimeRemainingSeconds(Math.floor((twelveHoursMs - diffMs) / 1000))
-            } else {
-              setTimeRemainingSeconds(0)
-            }
+        if (myActions && myActions.length > 0) {
+          const lastDate = myActions[0].created_at
+          setMyLastWateredAt(lastDate)
+          const diffMs = Date.now() - new Date(lastDate).getTime()
+          const twelveHoursMs = 12 * 60 * 60 * 1000
+          if (diffMs < twelveHoursMs) {
+            setTimeRemainingSeconds(Math.floor((twelveHoursMs - diffMs) / 1000))
           } else {
             setTimeRemainingSeconds(0)
           }
+        } else {
+          setTimeRemainingSeconds(0)
+        }
+
+        // 2. Cargar amigos conectados (bidireccional)
+        const { data: friendships } = await supabase
+          .from('friendships')
+          .select(`
+            id,
+            smoker_id,
+            friend_id,
+            status,
+            smoker:profiles!friendships_smoker_id_fkey(id, full_name, role, smoke_free_since),
+            friend:profiles!friendships_friend_id_fkey(id, full_name, role, smoke_free_since)
+          `)
+          .or(`smoker_id.eq.${user.id},friend_id.eq.${user.id}`)
+          .eq('status', 'accepted')
+
+        if (friendships && friendships.length > 0) {
+          const friendsData: FriendGardenData[] = []
+
+          for (const f of friendships) {
+            const rawFriend = f.smoker_id === user.id ? (f as any).friend : (f as any).smoker
+            if (!rawFriend || !rawFriend.id) continue
+
+            const { count: waterCount, data: lastWater } = await supabase
+              .from('plant_actions')
+              .select('created_at', { count: 'exact' })
+              .eq('smoker_id', rawFriend.id)
+              .eq('action_type', 'water')
+              .order('created_at', { ascending: false })
+              .limit(1)
+
+            const name = rawFriend.full_name || 'Compañero'
+            const color = getAvatarColor(name)
+            const initials = getInitials(name)
+
+            friendsData.push({
+              id: rawFriend.id,
+              name,
+              initials,
+              role: rawFriend.role || 'smoker',
+              avatarBg: color.bg,
+              avatarText: color.text,
+              totalWaterings: waterCount || 0,
+              lastWateredAt: lastWater?.[0]?.created_at || null,
+              smokeFreeSince: rawFriend.smoke_free_since,
+            })
+          }
+
+          setFriendsGardens(friendsData)
+
+          // Selección inicial
+          if (initialFriendParam && friendsData.some((fd) => fd.id === initialFriendParam)) {
+            setSelectedGardenId(initialFriendParam)
+          } else if (userProfile.role === 'friend' && friendsData.length > 0) {
+            setSelectedGardenId(friendsData[0].id)
+          } else {
+            setSelectedGardenId('me')
+          }
+        } else {
+          setSelectedGardenId(userProfile.role === 'friend' ? 'none' : 'me')
         }
       }
     } catch (err) {
@@ -202,13 +233,13 @@ export default function PlantPage() {
     } finally {
       setLoading(false)
     }
-  }, [router])
+  }, [router, initialFriendParam])
 
   useEffect(() => {
     loadData()
   }, [loadData])
 
-  // Temporizador de 12 horas (para fumadores)
+  // Temporizador de 12 horas
   useEffect(() => {
     if (timeRemainingSeconds <= 0) return
 
@@ -230,98 +261,120 @@ export default function PlantPage() {
     if (timeRemainingSeconds <= 0) return null
     const hours = Math.floor(timeRemainingSeconds / 3600)
     const minutes = Math.floor((timeRemainingSeconds % 3600) / 60)
-    const seconds = timeRemainingSeconds % 60
-    return `${hours.toString().padStart(2, '0')}h ${minutes
-      .toString()
-      .padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`
+    return `${hours.toString().padStart(2, '0')}h ${minutes.toString().padStart(2, '0')}m`
   }, [timeRemainingSeconds])
 
-  // Amigo actualmente seleccionado (en modo guardián)
-  const currentSelectedFriend = isGuardian && supportedFriends.length > 0
-    ? supportedFriends[selectedFriendIndex] || supportedFriends[0]
-    : null
+  // Determinar jardín actual
+  const isViewingOwnGarden = selectedGardenId === 'me'
+  const currentSelectedFriend = friendsGardens.find((f) => f.id === selectedGardenId) || null
 
-  // Cálculos del Jardín:
-  // Cada planta requiere 30 riegos para completarse y pasar al jardín
-  const effectiveTotalWaterings = isGuardian
-    ? currentSelectedFriend?.totalWaterings || 0
-    : totalWaterings
+  const effectiveSubjectName = isViewingOwnGarden
+    ? profile?.full_name || 'Mi Planta'
+    : currentSelectedFriend?.name || 'Compañero'
 
+  const effectiveTotalWaterings = isViewingOwnGarden
+    ? myWaterings
+    : currentSelectedFriend?.totalWaterings || 0
+
+  // Cálculos botánicos: 30 riegos por espécimen
   const currentPlantIndex = Math.floor(effectiveTotalWaterings / 30)
   const currentPlantStage = effectiveTotalWaterings % 30
   const completedPlantsCount = currentPlantIndex
 
-  const activeSpecies = PLANT_SPECIES[currentPlantIndex % PLANT_SPECIES.length]
-
-  // En modo demo usamos el estado del slider
-  const displayedStage = isDemoMode ? demoStage : currentPlantStage
-  const displayedSpeciesIndex = isDemoMode ? demoSpeciesIndex : currentPlantIndex
+  const displayedStage = isDemoActive ? demoStage : currentPlantStage
+  const displayedSpeciesIndex = currentPlantIndex
   const displayedSpecies = PLANT_SPECIES[displayedSpeciesIndex % PLANT_SPECIES.length]
 
-  // Riego interactivo (propio si es fumador, o a un amigo si es guardián)
+  // Acción de regar
   const handleWaterPlant = async () => {
     if (isWateringActive || !userId) return
 
-    if (!isGuardian && timeRemainingSeconds > 0) return
+    // Cooldown para propia planta
+    if (isViewingOwnGarden && timeRemainingSeconds > 0) return
 
     setIsWateringActive(true)
     setIsWateringAnim(true)
 
     try {
       const nowIso = new Date().toISOString()
-      const targetSmokerId = isGuardian && currentSelectedFriend ? currentSelectedFriend.id : userId
+      const targetSmokerId = isViewingOwnGarden ? userId : currentSelectedFriend?.id
 
-      const { error } = await supabase.from('plant_actions').insert({
+      if (!targetSmokerId) return
+
+      const { error: insertError } = await supabase.from('plant_actions').insert({
         smoker_id: targetSmokerId,
         friend_id: userId,
         action_type: 'water',
         created_at: nowIso,
       })
 
-      if (error) throw error
+      if (insertError) {
+        const { data: { session } } = await supabase.auth.getSession()
+        const apiRes = await fetch('/api/plant/water', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
+          body: JSON.stringify({
+            smoker_id: targetSmokerId,
+            friend_id: userId,
+            action_type: 'water',
+          }),
+        })
+
+        const apiData = await apiRes.json().catch(() => ({}))
+        if (!apiData.success) {
+          throw new Error(apiData.error || insertError.message)
+        }
+      }
 
       setTimeout(() => {
-        if (isGuardian && currentSelectedFriend) {
+        if (!isViewingOwnGarden && currentSelectedFriend) {
           const nextFriendWaterings = currentSelectedFriend.totalWaterings + 1
-          setSupportedFriends((prev) =>
-            prev.map((f, i) =>
-              i === selectedFriendIndex ? { ...f, totalWaterings: nextFriendWaterings } : f
+          setFriendsGardens((prev) =>
+            prev.map((f) =>
+              f.id === currentSelectedFriend.id
+                ? { ...f, totalWaterings: nextFriendWaterings, lastWateredAt: nowIso }
+                : f
             )
           )
-          setToastMessage(`💧 ¡Has regado la planta de ${currentSelectedFriend.name}! (+1 vitalidad)`)
+          setToastMessage(`💧 ¡Has impulsado la planta de ${currentSelectedFriend.name.split(' ')[0]}!`)
         } else {
-          const nextTotal = totalWaterings + 1
-          setTotalWaterings(nextTotal)
-          setLastWateredAt(nowIso)
+          const nextTotal = myWaterings + 1
+          setMyWaterings(nextTotal)
+          setMyLastWateredAt(nowIso)
           setTimeRemainingSeconds(12 * 60 * 60)
 
           if (nextTotal % 30 === 0) {
-            setToastMessage('🎉 ¡Felicidades! Planta madurada y añadida a tu Jardín Botánico.')
+            setToastMessage('🎉 ¡Felicidades! Planta madurada y sumada a tu Santuario.')
           } else {
-            setToastMessage(`¡Planta regada! Crecimiento: ${nextTotal % 30}/30 riegos 🌱`)
+            setToastMessage(`¡Planta nutrida! ${nextTotal % 30}/30 riegos 🌱`)
           }
         }
 
         try {
           confetti({
-            particleCount: 50,
-            spread: 70,
-            origin: { y: 0.6 },
+            particleCount: 45,
+            spread: 60,
+            origin: { y: 0.65 },
             colors: ['#10B981', '#34D399', '#38BDF8', '#74C69D'],
           })
         } catch {}
-      }, 1000)
+      }, 900)
 
       setTimeout(() => {
         setIsWateringAnim(false)
         setIsWateringActive(false)
-      }, 2200)
+      }, 2000)
 
       setTimeout(() => {
         setToastMessage(null)
-      }, 4000)
-    } catch (err) {
-      console.error('Error watering plant:', err)
+      }, 3500)
+    } catch (err: any) {
+      console.error('Error watering:', err)
+      setToastMessage('No se pudo registrar el riego. Inténtalo de nuevo.')
+      setTimeout(() => setToastMessage(null), 3000)
       setIsWateringAnim(false)
       setIsWateringActive(false)
     }
@@ -329,22 +382,22 @@ export default function PlantPage() {
 
   if (loading) {
     return (
-      <div className="min-h-[100dvh] w-full bg-white flex flex-col items-center justify-center max-w-md mx-auto p-6 space-y-4">
-        <div className="w-12 h-12 rounded-2xl bg-emerald-950 flex items-center justify-center animate-pulse">
-          <Sprout className="w-6 h-6 text-emerald-400" />
+      <div className="min-h-[100dvh] w-full bg-gradient-to-b from-[#F0FDF4] to-[#F8FAF9] flex flex-col items-center justify-center max-w-md mx-auto p-6 space-y-4">
+        <div className="w-14 h-14 rounded-3xl bg-emerald-900/10 text-emerald-800 flex items-center justify-center animate-pulse">
+          <Sprout className="w-7 h-7 stroke-[1.8]" />
         </div>
-        <p className="text-xs font-semibold uppercase tracking-widest text-neutral-400">
-          Cargando Jardín Botánico...
+        <p className="text-xs font-semibold tracking-wider text-neutral-400 uppercase">
+          Abriendo Santuario...
         </p>
       </div>
     )
   }
 
   return (
-    <div className="min-h-[100dvh] w-full bg-neutral-50/50 text-neutral-900 flex flex-col justify-between max-w-md mx-auto relative antialiased select-none pb-24">
-      {/* NOTIFICACIÓN TOAST */}
+    <div className="min-h-[100dvh] w-full bg-gradient-to-b from-[#F2FBF6] via-[#F8FAF9] to-white text-neutral-900 flex flex-col justify-between max-w-md mx-auto relative antialiased select-none pb-22">
+      {/* NOTIFICACIÓN TOAST MINIMALISTA */}
       {toastMessage && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-sm bg-neutral-950 text-white text-xs py-3 px-4 rounded-2xl shadow-xl flex items-center gap-2.5 animate-in fade-in slide-in-from-top duration-300">
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-xs bg-neutral-950/90 backdrop-blur-md text-white text-xs py-3 px-4 rounded-2xl shadow-xl flex items-center gap-2.5 animate-in fade-in slide-in-from-top-3 duration-300">
           <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
             <Check className="w-3.5 h-3.5" />
           </div>
@@ -352,80 +405,138 @@ export default function PlantPage() {
         </div>
       )}
 
-      {/* HEADER PRINCIPAL */}
+      {/* =================================================================== */}
+      {/* 1. CABECERA LIMPIA Y AIROSA                                         */}
+      {/* =================================================================== */}
       <header className="pt-6 px-6 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-xs">
-            <Sprout className="w-5 h-5" />
-          </div>
-          <div>
-            <h1 className="text-base font-bold text-neutral-950 leading-tight">
-              {isGuardian ? 'Jardines de mis Amigos' : 'Planta & Jardín'}
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl font-bold text-neutral-950 tracking-tight">
+              {isGuardian ? 'Jardines de Apoyo' : isViewingOwnGarden ? 'Mi Santuario' : `Jardín de ${effectiveSubjectName.split(' ')[0]}`}
             </h1>
-            <p className="text-[11px] text-neutral-400 font-medium">
-              {isGuardian
-                ? 'Acompaña y riega las plantas de tus compañeros'
-                : completedPlantsCount > 0
-                ? `${completedPlantsCount} ${completedPlantsCount === 1 ? 'planta cosechada' : 'plantas cosechadas'}`
-                : 'Tu primer espécimen en cultivo'}
-            </p>
+            {!isGuardian && isViewingOwnGarden && (
+              <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-100/70 text-emerald-800 rounded-full">
+                Nv. {completedPlantsCount + 1}
+              </span>
+            )}
           </div>
+          <p className="text-xs text-neutral-400 mt-0.5">
+            {isGuardian
+              ? `${friendsGardens.length} compañeros conectados`
+              : isViewingOwnGarden
+              ? `${completedPlantsCount} ${completedPlantsCount === 1 ? 'espécimen madurado' : 'especímenes madurados'}`
+              : `Acompañando a ${effectiveSubjectName}`}
+          </p>
         </div>
 
-        {/* Badge de nivel */}
-        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-200/70 rounded-full">
-          <TreePine className="w-3.5 h-3.5 text-emerald-700" />
-          <span className="text-xs font-semibold text-emerald-900">
-            {isGuardian ? 'Guardián 🛡️' : `Nivel ${completedPlantsCount + 1}`}
-          </span>
+        <div className="flex items-center gap-2">
+          {/* Botón info de la especie activa */}
+          {activeTab === 'active' && (!isGuardian || friendsGardens.length > 0) && (
+            <button
+              type="button"
+              onClick={() => setShowSpeciesInfo(true)}
+              className="w-9 h-9 rounded-full bg-white/80 border border-neutral-200/80 text-neutral-600 hover:text-emerald-700 flex items-center justify-center transition-colors shadow-2xs"
+              title="Ver propiedades y salud"
+            >
+              <Info className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Notificaciones */}
+          <button
+            type="button"
+            onClick={() => router.push('/dashboard/notifications')}
+            className="w-9 h-9 rounded-full bg-white/80 border border-neutral-200/80 text-neutral-600 hover:text-emerald-700 flex items-center justify-center transition-colors shadow-2xs"
+            title="Ver notificaciones"
+          >
+            <Bell className="w-4 h-4" />
+          </button>
         </div>
       </header>
 
-      {/* BANNER EXPLICATIVO PARA GUARDIANES */}
-      {isGuardian && (
-        <div className="px-6 mt-3">
-          <div className="bg-sky-50/90 border border-sky-200/80 rounded-2xl p-3.5 flex items-start gap-3 shadow-2xs">
-            <div className="w-8 h-8 rounded-xl bg-sky-100 text-sky-800 flex items-center justify-center shrink-0 mt-0.5">
-              <Droplets className="w-4 h-4 fill-sky-600/20 stroke-[2.2]" />
-            </div>
-            <div>
-              <h3 className="text-xs font-bold text-sky-950">Tu misión botánica</h3>
-              <p className="text-[11px] text-sky-800 mt-0.5 leading-relaxed">
-                Como guardián, puedes regar la planta de tus amigos para ayudarles a crecer y visitar los ejemplares de su jardín botánico.
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* =================================================================== */}
+      {/* 2. SELECTOR DE JARDÍN (SUTIL, SIN BORDES PESADOS NI TARJETAS)       */}
+      {/* =================================================================== */}
 
-      {/* SELECTOR DE AMIGOS EN MODO GUARDIÁN */}
-      {isGuardian && supportedFriends.length > 0 && (
-        <div className="px-6 mt-3 space-y-1.5">
-          <label className="text-[11px] font-semibold text-neutral-500 uppercase tracking-wider">
-            Amigo en cultivo
-          </label>
-          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-            {supportedFriends.map((f, idx) => {
-              const isSelected = idx === selectedFriendIndex
+      {/* Rol Guardián: selector horizontal destacado de amigos */}
+      {isGuardian && friendsGardens.length > 0 && (
+        <div className="px-6 mt-4">
+          <div className="flex gap-2.5 overflow-x-auto pb-1 no-scrollbar items-center">
+            {friendsGardens.map((friend) => {
+              const isSelected = selectedGardenId === friend.id
+              const daysClean = getDaysClean(friend.smokeFreeSince)
+
               return (
                 <button
-                  key={f.id}
+                  key={friend.id}
                   type="button"
-                  onClick={() => setSelectedFriendIndex(idx)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-2xl border transition-all shrink-0 ${
+                  onClick={() => setSelectedGardenId(friend.id)}
+                  className={`flex items-center gap-2 px-3.5 py-2 rounded-2xl transition-all shrink-0 ${
                     isSelected
-                      ? 'bg-neutral-950 text-white border-neutral-950 shadow-xs'
-                      : 'bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-50'
+                      ? 'bg-neutral-950 text-white shadow-sm scale-102'
+                      : 'bg-white/80 text-neutral-700 border border-neutral-200/70 hover:bg-white'
                   }`}
                 >
                   <div
                     className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                      isSelected ? 'bg-white/20 text-white' : `${f.avatarBg} ${f.avatarText}`
+                      isSelected ? 'bg-white/20 text-white' : `${friend.avatarBg} ${friend.avatarText}`
                     }`}
                   >
-                    {f.initials}
+                    {friend.initials}
                   </div>
-                  <span className="text-xs font-semibold">{f.name}</span>
+                  <div className="text-left leading-none">
+                    <div className="text-xs font-semibold">{friend.name.split(' ')[0]}</div>
+                    <div className={`text-[9px] mt-0.5 ${isSelected ? 'text-emerald-400' : 'text-neutral-400'}`}>
+                      {daysClean > 0 ? `${daysClean}d libre` : 'En proceso'}
+                    </div>
+                  </div>
+                </button>
+              )
+            })}
+
+            <button
+              type="button"
+              onClick={() => router.push('/dashboard/friends')}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-2xl border border-dashed border-neutral-300 text-neutral-500 hover:text-neutral-800 bg-white/40 text-xs font-medium shrink-0 transition-colors"
+            >
+              <UserPlus className="w-3.5 h-3.5" />
+              <span>Añadir</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Rol Fumador: si tiene amigos conectados, un selector sutil de píldoras */}
+      {!isGuardian && friendsGardens.length > 0 && (
+        <div className="px-6 mt-3">
+          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar items-center">
+            <button
+              type="button"
+              onClick={() => setSelectedGardenId('me')}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all shrink-0 ${
+                isViewingOwnGarden
+                  ? 'bg-neutral-950 text-white shadow-2xs'
+                  : 'bg-white/70 text-neutral-600 border border-neutral-200/70 hover:bg-white'
+              }`}
+            >
+              🌱 Mi Planta
+            </button>
+
+            {friendsGardens.map((friend) => {
+              const isSelected = selectedGardenId === friend.id
+              return (
+                <button
+                  key={friend.id}
+                  type="button"
+                  onClick={() => setSelectedGardenId(friend.id)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all shrink-0 ${
+                    isSelected
+                      ? 'bg-neutral-950 text-white shadow-2xs'
+                      : 'bg-white/70 text-neutral-600 border border-neutral-200/70 hover:bg-white'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span>{friend.name.split(' ')[0]}</span>
                 </button>
               )
             })}
@@ -433,97 +544,96 @@ export default function PlantPage() {
         </div>
       )}
 
-      {/* SI ES GUARDIÁN Y NO TIENE AMIGOS CONECTADOS */}
-      {isGuardian && supportedFriends.length === 0 && (
-        <div className="px-6 my-auto text-center space-y-4 py-12">
-          <div className="w-14 h-14 rounded-3xl bg-neutral-100 flex items-center justify-center mx-auto text-neutral-400">
-            <Users className="w-7 h-7" />
+      {/* ESTADO VACÍO PARA GUARDIÁN SIN AMIGOS */}
+      {isGuardian && friendsGardens.length === 0 && (
+        <div className="px-6 my-auto text-center space-y-4 py-16">
+          <div className="w-16 h-16 rounded-3xl bg-emerald-100/60 text-emerald-800 flex items-center justify-center mx-auto shadow-inner">
+            <Users className="w-8 h-8 stroke-[1.7]" />
           </div>
-          <div className="space-y-1">
-            <h3 className="text-sm font-bold text-neutral-950">Aún no tienes amigos en proceso</h3>
-            <p className="text-xs text-neutral-400 max-w-xs mx-auto">
-              Conecta con amigos que estén dejando de fumar para empezar a regar y cuidar de sus plantas.
+          <div className="space-y-1.5">
+            <h3 className="text-base font-bold text-neutral-950">Acompaña a un amigo</h3>
+            <p className="text-xs text-neutral-500 max-w-xs mx-auto leading-relaxed">
+              Conecta con personas que estén dejando de fumar para nutrir sus plantas y acompañarlas en su camino.
             </p>
           </div>
           <button
             type="button"
             onClick={() => router.push('/dashboard/friends')}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-neutral-950 text-white text-xs font-semibold rounded-2xl shadow-xs active:scale-95 transition-transform"
+            className="inline-flex items-center gap-2 px-5 py-3 bg-neutral-950 text-white text-xs font-semibold rounded-2xl shadow-sm active:scale-95 transition-transform"
           >
             <UserPlus className="w-4 h-4 text-emerald-400" />
-            <span>Buscar y añadir amigos</span>
+            <span>Conectar compañeros</span>
           </button>
         </div>
       )}
 
-      {/* TABS DE SUB-NAVEGACIÓN: PLANTA ACTUAL / MI JARDÍN */}
-      {(!isGuardian || supportedFriends.length > 0) && (
-        <div className="px-6 mt-4">
-          <div className="grid grid-cols-2 p-1 bg-neutral-200/70 rounded-2xl">
+      {/* =================================================================== */}
+      {/* 3. SUB-NAVEGACIÓN MINIMALISTA (PLANTA ACTIVA / SANTUARIO)            */}
+      {/* =================================================================== */}
+      {(!isGuardian || friendsGardens.length > 0) && (
+        <div className="px-6 mt-3">
+          <div className="flex items-center justify-center p-1 bg-neutral-200/50 rounded-2xl max-w-xs mx-auto">
             <button
               type="button"
               onClick={() => setActiveTab('active')}
-              className={`py-2 text-xs font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1.5 ${
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1.5 ${
                 activeTab === 'active'
-                  ? 'bg-white text-neutral-950 shadow-xs'
+                  ? 'bg-white text-neutral-950 shadow-2xs'
                   : 'text-neutral-500 hover:text-neutral-800'
               }`}
             >
               <Flower2 className="w-3.5 h-3.5 text-emerald-600" />
-              <span>{isGuardian ? `Planta de ${currentSelectedFriend?.name.split(' ')[0] || 'Amigo'}` : 'Planta Activa'}</span>
+              <span>Planta Viva</span>
             </button>
 
             <button
               type="button"
               onClick={() => setActiveTab('garden')}
-              className={`py-2 text-xs font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1.5 ${
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1.5 ${
                 activeTab === 'garden'
-                  ? 'bg-white text-neutral-950 shadow-xs'
+                  ? 'bg-white text-neutral-950 shadow-2xs'
                   : 'text-neutral-500 hover:text-neutral-800'
               }`}
             >
               <TreePine className="w-3.5 h-3.5 text-emerald-600" />
-              <span>{isGuardian ? `Jardín (${completedPlantsCount})` : `Mi Jardín (${completedPlantsCount})`}</span>
+              <span>Colección ({completedPlantsCount})</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* CONTENIDO PRINCIPAL */}
-      {(!isGuardian || supportedFriends.length > 0) && (
-        <main className="flex-1 px-6 py-4 space-y-4">
-          {/* =================================================================== */}
-          {/* VISTA 1: PLANTA ACTIVA (CUIDADO, RIEGO Y CRECIMIENTO EN VIVO)      */}
-          {/* =================================================================== */}
+      {/* =================================================================== */}
+      {/* 4. CONTENIDO PRINCIPAL ZEN                                          */}
+      {/* =================================================================== */}
+      {(!isGuardian || friendsGardens.length > 0) && (
+        <main className="flex-1 px-6 pt-2 pb-4 flex flex-col justify-between">
+          {/* VISTA 1: PLANTA ACTIVA (LIENZO ZEN INTEGRADO) */}
           {activeTab === 'active' && (
-            <div className="space-y-4 animate-in fade-in duration-300">
-              {/* CARD HERO DE LA PLANTA */}
-              <div className="bg-white rounded-3xl p-5 border border-neutral-100 shadow-xs relative overflow-hidden">
-                {/* Título de la especie y número de espécimen */}
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
-                      Espécimen #{displayedSpeciesIndex + 1}
-                    </span>
-                    <h2 className="text-lg font-bold text-neutral-950 mt-1">
-                      {displayedSpecies.name}
-                    </h2>
-                    <p className="text-xs text-neutral-400 italic font-serif">
-                      {displayedSpecies.scientificName}
-                    </p>
-                  </div>
+            <div className="flex-1 flex flex-col items-center justify-between py-2 animate-in fade-in duration-300">
+              {/* TÍTULO E INDICADOR DE PROGRESO DISCRETO */}
+              <div className="text-center space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-700 bg-emerald-50 border border-emerald-200/50 px-2.5 py-0.5 rounded-full inline-block">
+                  Espécimen #{displayedSpeciesIndex + 1}
+                </span>
+                <h2 className="text-xl font-bold text-neutral-950 tracking-tight">
+                  {displayedSpecies.name}
+                </h2>
+                <p className="text-xs text-neutral-400 italic font-serif">
+                  {displayedSpecies.scientificName}
+                </p>
+              </div>
 
-                  <div className="text-right">
-                    <span className="text-2xl font-light text-neutral-950 font-sans">
-                      {displayedStage}
-                    </span>
-                    <span className="text-xs text-neutral-400 font-medium">/30</span>
-                    <p className="text-[10px] text-neutral-500 font-medium">Riegos</p>
-                  </div>
-                </div>
+              {/* VISUALIZADOR PRINCIPAL CON PEDESTAL / AURA ZEN */}
+              <div className="relative my-auto flex flex-col items-center justify-center">
+                {/* Halo de respiración sutil */}
+                <div
+                  className={`absolute w-64 h-64 rounded-full bg-radial from-emerald-100/60 to-transparent blur-xl pointer-events-none transition-all duration-1000 ${
+                    isWateringAnim ? 'scale-125 opacity-90' : 'scale-100 opacity-60 animate-pulse'
+                  }`}
+                  style={{ animationDuration: '4s' }}
+                />
 
-                {/* VISUALIZADOR SVG PRINCIPAL */}
-                <div className="py-2">
+                <div className="relative z-10">
                   <GardenPlantVisualizer
                     stage={displayedStage}
                     speciesIndex={displayedSpeciesIndex}
@@ -532,96 +642,100 @@ export default function PlantPage() {
                   />
                 </div>
 
-                {/* Barra de progreso de crecimiento (0 a 30) */}
-                <div className="space-y-1.5 pt-2">
-                  <div className="flex justify-between text-[11px] font-medium text-neutral-500">
-                    <span>Maduración botánica</span>
-                    <span className="font-semibold text-emerald-800">
-                      {Math.round((displayedStage / 30) * 100)}%
-                    </span>
-                  </div>
-                  <div className="w-full h-2 bg-neutral-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-500"
-                      style={{ width: `${(displayedStage / 30) * 100}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* BOTÓN PRINCIPAL DE RIEGO */}
-                <div className="pt-4">
-                  <button
-                    type="button"
-                    onClick={handleWaterPlant}
-                    disabled={isWateringActive || (!isGuardian && timeRemainingSeconds > 0)}
-                    className="w-full h-13 bg-emerald-800 hover:bg-emerald-700 text-white font-semibold text-sm rounded-2xl flex items-center justify-center gap-2.5 transition-transform active:scale-[0.98] shadow-md shadow-emerald-800/20 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Droplets className="w-4 h-4 fill-emerald-300 stroke-[2.2]" />
-                    <span>
-                      {isWateringActive
-                        ? 'Regando con agua pura...'
-                        : isGuardian
-                        ? `Regar planta de ${currentSelectedFriend?.name.split(' ')[0] || 'Amigo'}`
-                        : timeRemainingSeconds > 0
-                        ? `Próximo riego en ${formattedCountdown}`
-                        : 'Regar planta (+1 Crecimiento)'}
-                    </span>
-                  </button>
-
-                  {!isGuardian && timeRemainingSeconds > 0 && (
-                    <p className="text-[11px] text-center text-neutral-400 mt-2">
-                      💧 Tu planta absorbe los nutrientes. Vuelve en unas horas para el siguiente riego.
-                    </p>
-                  )}
+                {/* Micro indicador de vitalidad */}
+                <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-neutral-500 bg-white/60 backdrop-blur-xs px-3 py-1 rounded-full border border-neutral-200/50 shadow-2xs">
+                  <span className="text-emerald-700">{displayedStage}/30 riegos</span>
+                  <span className="text-neutral-300">·</span>
+                  <span className="text-neutral-600">{Math.round((displayedStage / 30) * 100)}% maduración</span>
                 </div>
               </div>
 
-              {/* LORE BOTÁNICO & BENEFICIO CLÍNICO */}
-              <div className="bg-white rounded-3xl p-5 border border-neutral-100 shadow-xs space-y-3">
-                <div className="flex items-center gap-2 text-xs font-bold text-neutral-900">
-                  <Sparkles className="w-4 h-4 text-emerald-700" />
-                  <span>Historia & Beneficio Pulmonar</span>
+              {/* BARRA DE PROGRESO INTEGRADA */}
+              <div className="w-full max-w-xs mx-auto space-y-1">
+                <div className="w-full h-1.5 bg-neutral-200/60 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-500"
+                    style={{ width: `${(displayedStage / 30) * 100}%` }}
+                  />
                 </div>
-                <p className="text-xs text-neutral-600 leading-relaxed">
-                  {displayedSpecies.lore}
-                </p>
-                <div className="p-3 bg-emerald-50/80 border border-emerald-200/60 rounded-2xl flex items-start gap-2.5">
-                  <HeartPulse className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
-                  <p className="text-xs text-emerald-900 leading-snug">
-                    <span className="font-semibold">Regeneración:</span>{' '}
-                    {displayedSpecies.healingBenefit}
-                  </p>
-                </div>
+              </div>
+
+              {/* ACCIÓN PRINCIPAL DE RIEGO */}
+              <div className="w-full max-w-xs mx-auto pt-4">
+                {/* Caso 1: Guardián regando la planta de un amigo */}
+                {isGuardian && currentSelectedFriend ? (
+                  <button
+                    type="button"
+                    onClick={handleWaterPlant}
+                    disabled={isWateringActive}
+                    className="w-full h-13 bg-emerald-800 hover:bg-emerald-700 active:scale-[0.98] text-white font-semibold text-sm rounded-2xl flex items-center justify-center gap-2.5 shadow-md shadow-emerald-800/20 transition-all disabled:opacity-50"
+                  >
+                    <Droplets className="w-4 h-4 fill-emerald-300 stroke-[2]" />
+                    <span>
+                      {isWateringActive
+                        ? 'Enviando vitalidad...'
+                        : `Regar para apoyar a ${currentSelectedFriend.name.split(' ')[0]}`}
+                    </span>
+                  </button>
+                ) : isViewingOwnGarden ? (
+                  /* Caso 2: Fumador en su propia planta */
+                  <button
+                    type="button"
+                    onClick={handleWaterPlant}
+                    disabled={isWateringActive || timeRemainingSeconds > 0}
+                    className={`w-full h-13 font-semibold text-sm rounded-2xl flex items-center justify-center gap-2.5 transition-all shadow-md active:scale-[0.98] ${
+                      timeRemainingSeconds > 0
+                        ? 'bg-neutral-100 text-neutral-400 border border-neutral-200/80 shadow-none cursor-not-allowed'
+                        : 'bg-emerald-800 hover:bg-emerald-700 text-white shadow-emerald-800/20'
+                    }`}
+                  >
+                    {timeRemainingSeconds > 0 ? (
+                      <>
+                        <Clock className="w-4 h-4 text-neutral-400" />
+                        <span>Próximo riego en {formattedCountdown}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Droplets className="w-4 h-4 fill-emerald-300 stroke-[2]" />
+                        <span>
+                          {isWateringActive ? 'Nutriendo raíces...' : 'Regar mi planta (+1 Crecimiento)'}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  /* Caso 3: Fumador mirando el jardín de un amigo */
+                  <div className="text-center">
+                    <p className="text-xs text-neutral-400 mb-2">
+                      Estás visitando el jardín botánico de {effectiveSubjectName}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => router.push('/dashboard/friends')}
+                      className="w-full h-11 bg-white border border-neutral-200 text-neutral-700 font-semibold text-xs rounded-2xl flex items-center justify-center gap-2 hover:bg-neutral-50 transition-colors shadow-2xs"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Enviar mensaje de ánimo</span>
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
 
-          {/* =================================================================== */}
-          {/* VISTA 2: MI JARDÍN BOTÁNICO (COLECCIÓN DE ESPECIES COSECHADAS)     */}
-          {/* =================================================================== */}
+          {/* VISTA 2: COLECCIÓN BOTÁNICA (SANTUARIO LIMPIO Y SIN TARJETAS PESADAS) */}
           {activeTab === 'garden' && (
-            <div className="space-y-4 animate-in fade-in duration-300">
-              {/* HEADER DEL JARDÍN */}
-              <div className="bg-gradient-to-br from-emerald-950 to-neutral-900 text-white rounded-3xl p-5 shadow-sm space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">
-                    {isGuardian ? `Jardín de ${currentSelectedFriend?.name || 'Amigo'}` : 'Santuario Botánico'}
-                  </span>
-                  <span className="text-xs font-semibold text-neutral-300">
-                    {completedPlantsCount}/6 Especies
-                  </span>
-                </div>
-                <h2 className="text-xl font-bold tracking-tight">
-                  {completedPlantsCount === 0
-                    ? 'Tu primer cultivo en marcha'
-                    : `${completedPlantsCount} ${completedPlantsCount === 1 ? 'espécimen madurado' : 'especímenes madurados'}`}
-                </h2>
-                <p className="text-xs text-emerald-200/80 leading-relaxed">
-                  Cada 30 riegos se completa una planta y se traslada a este jardín permanente como símbolo de perseverancia.
+            <div className="space-y-4 py-2 animate-in fade-in duration-300">
+              <div className="text-center space-y-1">
+                <h3 className="text-base font-bold text-neutral-950">
+                  {isViewingOwnGarden ? 'Tu Santuario Permanente' : `Colección de ${effectiveSubjectName.split(' ')[0]}`}
+                </h3>
+                <p className="text-xs text-neutral-400">
+                  {completedPlantsCount} de 6 especímenes desbloqueados
                 </p>
               </div>
 
-              {/* GRID DE ESPECIES DEL JARDÍN */}
+              {/* GRID LIMPIO DE ESPECIES */}
               <div className="grid grid-cols-2 gap-3">
                 {PLANT_SPECIES.map((species, idx) => {
                   const isHarvested = completedPlantsCount > idx
@@ -641,35 +755,32 @@ export default function PlantPage() {
                           })
                         }
                       }}
-                      className={`bg-white border rounded-3xl p-4 flex flex-col justify-between space-y-2 transition-all cursor-pointer ${
+                      className={`relative rounded-3xl p-3.5 flex flex-col items-center justify-between text-center transition-all cursor-pointer ${
                         isHarvested
-                          ? 'border-emerald-200/80 shadow-xs hover:border-emerald-400 hover:shadow-sm'
+                          ? 'bg-white border border-emerald-200/80 shadow-2xs hover:border-emerald-400'
                           : isCurrentActive
-                          ? 'border-emerald-700/60 shadow-xs ring-1 ring-emerald-700/20'
-                          : 'border-neutral-200/60 opacity-60'
+                          ? 'bg-white border-2 border-emerald-700/60 shadow-xs ring-2 ring-emerald-500/10'
+                          : 'bg-neutral-100/50 border border-neutral-200/40 opacity-45'
                       }`}
                     >
-                      <div className="flex items-start justify-between">
-                        <span className="text-[10px] font-bold text-neutral-400">
-                          #{idx + 1}
-                        </span>
+                      {/* Badge de estado discreto */}
+                      <div className="w-full flex justify-between items-center mb-1 text-[9px] font-bold">
+                        <span className="text-neutral-400">#{idx + 1}</span>
                         {isHarvested ? (
-                          <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[9px] font-bold flex items-center gap-1">
-                            <Check className="w-2.5 h-2.5 stroke-[3]" /> Madura
+                          <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-200/60">
+                            Madurada ✓
                           </span>
                         ) : isCurrentActive ? (
-                          <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[9px] font-bold animate-pulse">
-                            En cultivo ({currentPlantStage}/30)
+                          <span className="text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded-full border border-sky-200/60">
+                            En cultivo
                           </span>
                         ) : (
-                          <span className="px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-500 text-[9px] font-medium flex items-center gap-1">
-                            <Lock className="w-2.5 h-2.5" /> Bloqueada
-                          </span>
+                          <Lock className="w-3 h-3 text-neutral-400" />
                         )}
                       </div>
 
-                      {/* Miniatura visual de la planta */}
-                      <div className="py-2 flex justify-center">
+                      {/* Miniatura visual */}
+                      <div className="py-1">
                         <GardenPlantVisualizer
                           stage={stageForVisualizer}
                           speciesIndex={idx}
@@ -677,10 +788,11 @@ export default function PlantPage() {
                         />
                       </div>
 
-                      <div>
-                        <h3 className="text-xs font-bold text-neutral-950 truncate">
+                      {/* Título de la especie */}
+                      <div className="w-full mt-1">
+                        <h4 className="text-xs font-bold text-neutral-900 truncate">
                           {species.name}
-                        </h3>
+                        </h4>
                         <p className="text-[10px] text-neutral-400 italic truncate font-serif">
                           {species.scientificName}
                         </p>
@@ -691,35 +803,115 @@ export default function PlantPage() {
               </div>
             </div>
           )}
+
+          {/* SIMULADOR DEBUG (SOLO VISIBLE CON ?debug=true) */}
+          {isDebugParam && (
+            <div className="mt-4 pt-4 border-t border-neutral-200/60 text-xs">
+              <button
+                type="button"
+                onClick={() => setIsDemoActive(!isDemoActive)}
+                className="text-[10px] text-neutral-400 underline"
+              >
+                {isDemoActive ? 'Desactivar Simulador' : 'Simulador Dev'}
+              </button>
+              {isDemoActive && (
+                <div className="mt-2 space-y-1">
+                  <div className="flex justify-between">
+                    <span>Etapa: {demoStage}/30</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="30"
+                    value={demoStage}
+                    onChange={(e) => setDemoStage(Number(e.target.value))}
+                    className="w-full"
+                  />
+                </div>
+              )}
+            </div>
+          )}
         </main>
       )}
 
-      {/* MODAL DE INSPECCIÓN DE PLANTA DEL JARDÍN */}
+      {/* =================================================================== */}
+      {/* 5. MODAL DE INFORMACIÓN DE ESPECIE & SALUD PULMONAR (BAJO DEMANDA) */}
+      {/* =================================================================== */}
+      {showSpeciesInfo && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-t-3xl sm:rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4 border border-neutral-100 animate-in slide-in-from-bottom-4 duration-200">
+            <div className="flex items-start justify-between">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
+                  Espécimen #{displayedSpeciesIndex + 1}
+                </span>
+                <h3 className="text-base font-bold text-neutral-950 mt-1">
+                  {displayedSpecies.name}
+                </h3>
+                <p className="text-xs text-neutral-400 italic font-serif">
+                  {displayedSpecies.scientificName}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSpeciesInfo(false)}
+                className="w-8 h-8 rounded-full bg-neutral-100 text-neutral-500 hover:bg-neutral-200 flex items-center justify-center"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-neutral-600 leading-relaxed">
+              {displayedSpecies.lore}
+            </p>
+
+            <div className="p-3.5 bg-emerald-50/80 border border-emerald-200/60 rounded-2xl flex items-start gap-2.5">
+              <HeartPulse className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+              <p className="text-xs text-emerald-900 leading-snug">
+                <span className="font-semibold">Recuperación pulmonar:</span>{' '}
+                {displayedSpecies.healingBenefit}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowSpeciesInfo(false)}
+              className="w-full py-2.5 bg-neutral-950 text-white text-xs font-semibold rounded-2xl hover:bg-neutral-800 transition-colors"
+            >
+              Entendido
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* 6. MODAL DE INSPECCIÓN DE PLANTA COSECHADA                         */}
+      {/* =================================================================== */}
       {inspectedPlant && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-white rounded-3xl p-6 space-y-4 animate-in slide-in-from-bottom duration-300">
-            <div className="flex justify-between items-start">
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4 border border-neutral-100 animate-in zoom-in-95 duration-200">
+            <div className="flex items-start justify-between">
               <div>
                 <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
                   Espécimen #{inspectedPlant.speciesIndex + 1}
                 </span>
-                <h3 className="text-lg font-bold text-neutral-950 mt-1">
+                <h3 className="text-base font-bold text-neutral-950 mt-1">
                   {inspectedPlant.species.name}
                 </h3>
-                <p className="text-xs text-neutral-400 italic">
+                <p className="text-xs text-neutral-400 italic font-serif">
                   {inspectedPlant.species.scientificName}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setInspectedPlant(null)}
-                className="text-neutral-400 hover:text-neutral-700"
+                className="w-8 h-8 rounded-full bg-neutral-100 text-neutral-500 hover:bg-neutral-200 flex items-center justify-center"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="py-2">
+            <div className="py-2 flex justify-center">
               <GardenPlantVisualizer
                 stage={inspectedPlant.isHarvested ? 30 : inspectedPlant.wateringsCompleted}
                 speciesIndex={inspectedPlant.speciesIndex}
@@ -727,20 +919,21 @@ export default function PlantPage() {
               />
             </div>
 
-            <div className="space-y-2 text-xs text-neutral-600 bg-neutral-50 p-3.5 rounded-2xl border border-neutral-200/60">
-              <p className="font-medium text-neutral-900">
-                {inspectedPlant.species.lore}
-              </p>
-              <p className="text-emerald-800">
-                🌿 <span className="font-semibold">Beneficio clínico:</span>{' '}
-                {inspectedPlant.species.healingBenefit}
-              </p>
+            <div className="space-y-2 text-xs text-neutral-600">
+              <p className="leading-relaxed">{inspectedPlant.species.lore}</p>
+              <div className="p-3 bg-emerald-50/80 border border-emerald-200/60 rounded-2xl flex items-start gap-2.5">
+                <HeartPulse className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
+                <p className="text-xs text-emerald-900 leading-snug">
+                  <span className="font-semibold">Beneficio en la salud:</span>{' '}
+                  {inspectedPlant.species.healingBenefit}
+                </p>
+              </div>
             </div>
 
             <button
               type="button"
               onClick={() => setInspectedPlant(null)}
-              className="w-full h-11 bg-neutral-950 text-white font-medium text-xs rounded-2xl"
+              className="w-full py-2.5 bg-neutral-950 text-white text-xs font-semibold rounded-2xl hover:bg-neutral-800 transition-colors"
             >
               Cerrar
             </button>
@@ -748,11 +941,27 @@ export default function PlantPage() {
         </div>
       )}
 
-      {/* BARRA DE NAVEGACIÓN INFERIOR UNIFICADA */}
-      <BottomNav
-        currentTab="plant"
-        userRole={isGuardian ? 'friend' : 'smoker'}
-      />
+      {/* BARRA DE NAVEGACIÓN INFERIOR */}
+      <BottomNav currentTab="plant" userRole={profile?.role || 'smoker'} />
     </div>
+  )
+}
+
+export default function PlantPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-[100dvh] w-full bg-gradient-to-b from-[#F0FDF4] to-[#F8FAF9] flex flex-col items-center justify-center max-w-md mx-auto p-6 space-y-4">
+          <div className="w-14 h-14 rounded-3xl bg-emerald-900/10 text-emerald-800 flex items-center justify-center animate-pulse">
+            <Sprout className="w-7 h-7 stroke-[1.8]" />
+          </div>
+          <p className="text-xs font-semibold tracking-wider text-neutral-400 uppercase">
+            Abriendo Santuario...
+          </p>
+        </div>
+      }
+    >
+      <PlantPageContent />
+    </Suspense>
   )
 }

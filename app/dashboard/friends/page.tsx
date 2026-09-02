@@ -9,6 +9,7 @@ import {
   Award,
   User,
   Droplets,
+  Sprout,
   Check,
   X,
   UserPlus,
@@ -440,8 +441,9 @@ export default function FriendsDashboard() {
         await loadUnreadCounts(user.id)
 
         // Escuchar mensajes entrantes en tiempo real para notificaciones globales y contador rojo
+        const channelName = `user-inbox-${user.id}-${Date.now()}`
         const inboxChannel = supabase
-          .channel(`user-inbox-${user.id}`)
+          .channel(channelName)
           .on(
             'postgres_changes',
             {
@@ -486,7 +488,9 @@ export default function FriendsDashboard() {
                 .maybeSingle()
 
               const senderName = senderProfile?.full_name || 'Un amigo'
-              showToast(`💬 Mensaje de ${senderName}: "${newMsg.content.slice(0, 35)}${newMsg.content.length > 35 ? '...' : ''}"`)
+              showToast(
+                `💬 Mensaje de ${senderName}: "${newMsg.content.slice(0, 35)}${newMsg.content.length > 35 ? '...' : ''}"`
+              )
             }
           )
           .subscribe()
@@ -872,6 +876,16 @@ export default function FriendsDashboard() {
 
                           {/* Botones de acción directos */}
                           <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Botón Ver Jardín */}
+                            <button
+                              type="button"
+                              onClick={() => router.push(`/dashboard/plant?friendId=${friend.id}`)}
+                              className="w-8 h-8 rounded-full bg-emerald-50/80 border border-emerald-200/60 text-emerald-800 hover:bg-emerald-100 flex items-center justify-center transition-all active:scale-90"
+                              title={`Ver jardín de ${friend.name}`}
+                            >
+                              <Sprout className="w-3.5 h-3.5 stroke-[2.2]" />
+                            </button>
+
                             {/* Botón de Chat con badge rojo */}
                             <button
                               type="button"
@@ -953,7 +967,17 @@ export default function FriendsDashboard() {
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Botón Ver Jardín */}
+                            <button
+                              type="button"
+                              onClick={() => router.push(`/dashboard/plant?friendId=${supporter.id}`)}
+                              className="w-8 h-8 rounded-full bg-sky-50/80 border border-sky-200/60 text-sky-800 hover:bg-sky-100 flex items-center justify-center transition-all active:scale-90"
+                              title={`Ver jardín de ${supporter.name}`}
+                            >
+                              <Sprout className="w-3.5 h-3.5 stroke-[2.2]" />
+                            </button>
+
                             <button
                               type="button"
                               onClick={() => handleOpenChat(supporter)}
@@ -968,7 +992,7 @@ export default function FriendsDashboard() {
                               )}
                             </button>
 
-                            <span className="text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/70 px-2.5 py-0.5 rounded-full">
+                            <span className="text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/70 px-2 py-0.5 rounded-full">
                               Guardián
                             </span>
                           </div>
