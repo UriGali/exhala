@@ -13,6 +13,10 @@ import {
   Loader2,
   Calendar,
   X,
+  TrendingUp,
+  Wallet,
+  Coins,
+  PiggyBank,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
@@ -278,10 +282,20 @@ export default function ProfilePage() {
     }
   }
 
-  // Calcular días sin fumar
+  // Calcular días sin fumar y ganancias financieras por abstinencia
   const daysClean = profile?.smoke_free_since
     ? Math.max(0, Math.floor((Date.now() - new Date(profile.smoke_free_since).getTime()) / (1000 * 60 * 60 * 24)))
     : 0
+
+  const userCigsPerDay = profile?.cigs_per_day || cigsPerDay || 15
+  const userPackPrice = Number(profile?.pack_price) || packPrice || 5.5
+  const costPerCigarette = userPackPrice / 20
+  const dailySavings = userCigsPerDay * costPerCigarette
+  const totalMoneySaved = daysClean * dailySavings
+  const totalCigsAvoided = daysClean * userCigsPerDay
+  const packsAvoided = (totalCigsAvoided / 20).toFixed(1)
+  const monthlyProjected = dailySavings * 30
+  const yearlyProjected = dailySavings * 365
 
   if (loading) {
     return (
@@ -497,136 +511,103 @@ export default function ProfilePage() {
             )}
           </div>
 
-          {/* FORMULARIO DE HÁBITOS & DATOS */}
+          {/* TARJETA DE GANANCIAS Y DINERO AHORRADO EN TABACO */}
           <div
-            className="rounded-[22px] p-[16px] border border-[rgba(232,183,94,0.12)] space-y-3"
+            className="rounded-[24px] p-[20px] border border-[rgba(232,183,94,0.18)] space-y-4 shadow-xl relative overflow-hidden"
             style={{
-              background: 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))',
+              background: 'radial-gradient(120% 90% at 50% -10%, rgba(232,183,94,0.1) 0%, rgba(22,36,28,0.7) 50%, rgba(15,25,19,0.9) 100%)',
             }}
           >
-            <div className="flex items-center justify-between pb-2 border-b border-[rgba(232,183,94,0.08)]">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-[#7C9481]">
-                {profile?.role === 'friend' ? 'Datos del Guardián' : 'Ajustes de Abstinencia'}
+            {/* CABECERA DE GANANCIAS */}
+            <div className="flex items-center justify-between pb-3 border-b border-[rgba(232,183,94,0.1)]">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-full bg-[rgba(232,183,94,0.12)] border border-[rgba(232,183,94,0.25)] flex items-center justify-center text-[#E8B75E]">
+                  <Coins className="w-3.5 h-3.5" />
+                </div>
+                <div>
+                  <h3 className="font-fraunces font-medium text-[15.5px] text-[#F1EEE2] leading-tight">
+                    Ganancias Acumuladas
+                  </h3>
+                  <span className="text-[10.5px] text-[#7C9481]">
+                    Dinero no gastado en tabaco
+                  </span>
+                </div>
+              </div>
+
+              <span className="text-[10px] font-semibold tracking-wider text-[#52B788] bg-[rgba(82,183,136,0.12)] border border-[rgba(82,183,136,0.25)] px-2 py-0.5 rounded-full">
+                AHORRO REAL
               </span>
-              <Sparkles className="w-3.5 h-3.5 text-[#E8B75E]" />
             </div>
 
-            <form onSubmit={handleSaveProfile} className="space-y-3">
-              {/* Nombre */}
-              <div>
-                <label className="block text-xs text-[#A9BBA4] mb-1">
-                  Nombre o apodo
-                </label>
-                <input
-                  type="text"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  required
-                  placeholder="Tu nombre"
-                  className="w-full py-2.5 px-3 bg-black/25 border border-[rgba(232,183,94,0.18)] rounded-xl text-xs text-[#F1EEE2] focus:outline-none focus:border-[#E8B75E] transition-colors"
-                />
+            {/* HERO STAT: TOTAL DINERO GANADO */}
+            <div className="text-center py-2 space-y-1">
+              <span className="text-[11.5px] text-[#A9BBA4] uppercase tracking-wider font-medium">
+                Has retenido en tu bolsillo
+              </span>
+              <div className="font-fraunces font-bold text-[36px] text-[#E8B75E] tracking-tight drop-shadow-[0_2px_12px_rgba(232,183,94,0.25)]">
+                +{totalMoneySaved.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+              </div>
+              <p className="text-[12px] text-[#7C9481]">
+                En tus <strong className="text-[#F1EEE2] font-semibold">{daysClean} {daysClean === 1 ? 'día' : 'días'}</strong> de libertad sin fumar
+              </p>
+            </div>
+
+            {/* GRID DE MÉTRICAS COMPLEMENTARIAS */}
+            <div className="grid grid-cols-3 gap-2 pt-1">
+              <div className="p-2.5 rounded-xl bg-black/25 border border-[rgba(232,183,94,0.1)] text-center">
+                <span className="text-[10px] text-[#7C9481] block truncate">No fumados</span>
+                <span className="font-fraunces font-semibold text-[15px] text-[#F1EEE2] block mt-0.5">
+                  {totalCigsAvoided.toLocaleString('es-ES')}
+                </span>
+                <span className="text-[9.5px] text-[#A9BBA4]">cigarrillos</span>
               </div>
 
-              {profile?.role === 'smoker' && (
-                <>
-                  {/* Fecha sin fumar */}
-                  <div>
-                    <label className="block text-xs text-[#A9BBA4] mb-1 flex items-center justify-between">
-                      <span>Inicio sin fumar</span>
-                      <span className="text-[10px] text-[#7C9481]">Último cigarrillo</span>
-                    </label>
-                    <input
-                      type="date"
-                      value={smokeFreeDate}
-                      onChange={(e) => setSmokeFreeDate(e.target.value)}
-                      required
-                      className="w-full py-2.5 px-3 bg-black/25 border border-[rgba(232,183,94,0.18)] rounded-xl text-xs text-[#F1EEE2] focus:outline-none focus:border-[#E8B75E] transition-colors"
-                    />
-                  </div>
-
-                  {/* Cigarrillos diarios y precio */}
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="block text-xs text-[#A9BBA4] mb-1">
-                        Cigarrillos / día
-                      </label>
-                      <input
-                        type="number"
-                        min="1"
-                        max="100"
-                        value={cigsPerDay}
-                        onChange={(e) => setCigsPerDay(Number(e.target.value))}
-                        required
-                        className="w-full py-2.5 px-3 bg-black/25 border border-[rgba(232,183,94,0.18)] rounded-xl text-xs text-[#F1EEE2] focus:outline-none focus:border-[#E8B75E] transition-colors"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs text-[#A9BBA4] mb-1">
-                        Precio cajetilla (€)
-                      </label>
-                      <input
-                        type="number"
-                        step="0.05"
-                        min="0.5"
-                        max="50"
-                        value={packPrice}
-                        onChange={(e) => setPackPrice(Number(e.target.value))}
-                        required
-                        className="w-full py-2.5 px-3 bg-black/25 border border-[rgba(232,183,94,0.18)] rounded-xl text-xs text-[#F1EEE2] focus:outline-none focus:border-[#E8B75E] transition-colors"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Bote por recaída */}
-                  <div>
-                    <label className="block text-xs text-[#A9BBA4] mb-1.5 flex items-center justify-between">
-                      <span>Aporte por recaída</span>
-                      <span className="text-[10px] text-[#E8B75E] font-medium">{penaltyAmount}€ simbólicos</span>
-                    </label>
-
-                    <div className="grid grid-cols-4 gap-1.5">
-                      {[1.0, 3.0, 5.0, 10.0].map((amt) => {
-                        const isSelected = penaltyAmount === amt
-                        return (
-                          <button
-                            key={amt}
-                            type="button"
-                            onClick={() => setPenaltyAmount(amt)}
-                            className={`py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
-                              isSelected
-                                ? 'bg-[#E8B75E] text-[#1B1710] shadow-[0_0_12px_rgba(232,183,94,0.3)]'
-                                : 'bg-black/25 border border-[rgba(232,183,94,0.15)] text-[#A9BBA4] hover:text-[#F1EEE2]'
-                            }`}
-                          >
-                            {amt}€
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* Botón Guardar */}
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="w-full py-3 bg-[#E8B75E] text-[#1B1710] font-semibold text-xs rounded-xl flex items-center justify-center gap-2 hover:bg-[#E8B75E]/90 transition-all cursor-pointer active:scale-98 shadow-[0_4px_16px_rgba(232,183,94,0.2)] disabled:opacity-50"
-                >
-                  {isSaving ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      <span>Guardando cambios...</span>
-                    </>
-                  ) : (
-                    <span>Guardar cambios</span>
-                  )}
-                </button>
+              <div className="p-2.5 rounded-xl bg-black/25 border border-[rgba(232,183,94,0.1)] text-center">
+                <span className="text-[10px] text-[#7C9481] block truncate">Ahorro / día</span>
+                <span className="font-fraunces font-semibold text-[15px] text-[#E8B75E] block mt-0.5">
+                  {dailySavings.toFixed(2)} €
+                </span>
+                <span className="text-[9.5px] text-[#A9BBA4]">cada día</span>
               </div>
-            </form>
-            <div className="h-8 shrink-0 pointer-events-none" />
+
+              <div className="p-2.5 rounded-xl bg-black/25 border border-[rgba(232,183,94,0.1)] text-center">
+                <span className="text-[10px] text-[#7C9481] block truncate">Cajetillas</span>
+                <span className="font-fraunces font-semibold text-[15px] text-[#52B788] block mt-0.5">
+                  {packsAvoided}
+                </span>
+                <span className="text-[9.5px] text-[#A9BBA4]">evitadas</span>
+              </div>
+            </div>
+
+            {/* PROYECCIÓN DE FUTURO */}
+            <div className="p-3.5 rounded-2xl bg-[rgba(255,255,255,0.02)] border border-[rgba(232,183,94,0.12)] space-y-2.5">
+              <div className="flex items-center gap-1.5 text-xs text-[#A9BBA4] font-medium">
+                <TrendingUp className="w-3.5 h-3.5 text-[#52B788]" />
+                <span>Proyección de tu dinero si sigues así</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div className="p-2 rounded-xl bg-black/30 border border-white/5 flex flex-col justify-between">
+                  <span className="text-[10px] text-[#7C9481]">En 1 mes (30 días)</span>
+                  <span className="font-fraunces font-bold text-[17px] text-[#F1EEE2] mt-1">
+                    +{monthlyProjected.toFixed(0)} €
+                  </span>
+                </div>
+
+                <div className="p-2 rounded-xl bg-black/30 border border-white/5 flex flex-col justify-between">
+                  <span className="text-[10px] text-[#7C9481]">En 1 año (365 días)</span>
+                  <span className="font-fraunces font-bold text-[17px] text-[#E8B75E] mt-1">
+                    +{yearlyProjected.toFixed(0)} €
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-[#7C9481] text-center italic pt-0.5 leading-relaxed">
+                🌿 Cada día limpio es salud para tus pulmones y libertad financiera para tu vida.
+              </p>
+            </div>
+
+            <div className="h-4 shrink-0 pointer-events-none" />
           </div>
         </div>
 
