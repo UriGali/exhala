@@ -30,48 +30,8 @@ export async function GET(request: Request) {
       .eq('user_id', userId)
 
     if (membError || !memberships || memberships.length === 0) {
-      // Fallback con grupos demo sugeridos por defecto
-      const demoGroups = [
-        {
-          id: 'demo-group-1',
-          name: 'Escuadrón Libertad Zen',
-          description: 'Espacio de apoyo mutuo para respirar limpio y compartir victorias.',
-          member_count: 4,
-          created_by: userId,
-          created_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-          last_message: {
-            content: '💧 ¡Acabo de regar la planta de todos! Mucha fuerza hoy.',
-            sender_name: 'Vinyet',
-            created_at: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
-          },
-          members: [
-            { id: userId, name: 'Tú', initials: 'TÚ', role: 'smoker' },
-            { id: 'demo-user-1', name: 'Vinyet Blasi', initials: 'VB', role: 'smoker' },
-            { id: 'demo-user-2', name: 'Angi', initials: 'A', role: 'smoker' },
-            { id: 'demo-user-3', name: 'Carlos Díaz (Nuevo)', initials: 'CD', role: 'friend' },
-          ],
-        },
-        {
-          id: 'demo-group-2',
-          name: 'Compañeros de Racha 🌿',
-          description: 'Grupo de enfoque para superar las ganas en momentos de antojo.',
-          member_count: 3,
-          created_by: 'demo-user-2',
-          created_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
-          last_message: {
-            content: '¡3 días limpios ya! La respiración en caja me ha ayudado muchísimo.',
-            sender_name: 'Angi',
-            created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-          },
-          members: [
-            { id: userId, name: 'Tú', initials: 'TÚ', role: 'smoker' },
-            { id: 'demo-user-2', name: 'Angi', initials: 'A', role: 'smoker' },
-            { id: 'demo-user-4', name: 'Laura Pons (Compañera)', initials: 'LP', role: 'smoker' },
-          ],
-        },
-      ]
-
-      return NextResponse.json({ success: true, groups: demoGroups, isFallback: true })
+      // No hay grupos creados todavía
+      return NextResponse.json({ success: true, groups: [] })
     }
 
     const groupIds = memberships.map((m) => m.group_id)

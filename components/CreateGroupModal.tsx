@@ -138,7 +138,7 @@ export default function CreateGroupModal({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Ej. Escuadrón Libertad Zen"
+              placeholder="Ej. Grupo de amigos"
               required
               maxLength={40}
               className="w-full h-11 px-3.5 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(232,183,94,0.16)] text-[#F1EEE2] text-[13px] placeholder:text-[#7C9481] focus:outline-none focus:border-[#E8B75E] transition-colors"

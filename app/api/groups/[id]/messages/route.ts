@@ -35,50 +35,7 @@ export async function GET(
       .order('created_at', { ascending: true })
 
     if (error || !messages) {
-      // Fallback demo messages si la tabla no está creada aún
-      const demoMessages = [
-        {
-          id: 'msg-demo-1',
-          group_id: groupId,
-          sender_id: 'demo-user-1',
-          content: '¡Bienvenidos al grupo de apoyo! ¿Cómo lleváis el día de hoy? 🌿',
-          created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-          sender: {
-            id: 'demo-user-1',
-            full_name: 'Vinyet Blasi',
-            role: 'smoker',
-            avatar_url: null,
-          },
-        },
-        {
-          id: 'msg-demo-2',
-          group_id: groupId,
-          sender_id: 'demo-user-2',
-          content: '¡Con muchas ganas! La respiración guiada del botón SOS me ayudó a calmar un momento difícil.',
-          created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-          sender: {
-            id: 'demo-user-2',
-            full_name: 'Angi',
-            role: 'smoker',
-            avatar_url: null,
-          },
-        },
-        {
-          id: 'msg-demo-3',
-          group_id: groupId,
-          sender_id: 'demo-user-3',
-          content: '¡Mucho ánimo a todos! Como guardián estoy pendiente para enviaros agua y vitalidad en cualquier instante. 💪',
-          created_at: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
-          sender: {
-            id: 'demo-user-3',
-            full_name: 'Carlos Díaz',
-            role: 'friend',
-            avatar_url: null,
-          },
-        },
-      ]
-
-      return NextResponse.json({ success: true, messages: demoMessages, isFallback: true })
+      return NextResponse.json({ success: true, messages: [] })
     }
 
     return NextResponse.json({ success: true, messages })

@@ -43,75 +43,10 @@ export async function GET(
       .eq('group_id', groupId)
 
     if (error || !members || members.length === 0) {
-      // Fallback demo members si la base aún no tiene las tablas o es grupo demo
-      const demoMembers = [
-        {
-          id: 'mem-1',
-          user_id: viewerId || 'me',
-          name: 'Tú',
-          initials: 'TÚ',
-          role: 'smoker',
-          groupRole: 'admin',
-          isFriend: true,
-          friendshipStatus: 'accepted',
-          isViewer: true,
-        },
-        {
-          id: 'mem-2',
-          user_id: '00000000-0000-4000-8000-000000000001',
-          name: 'Vinyet Blasi Ventalló',
-          initials: 'VB',
-          role: 'smoker',
-          groupRole: 'member',
-          isFriend: true,
-          friendshipStatus: 'accepted',
-          isViewer: false,
-        },
-        {
-          id: 'mem-3',
-          user_id: '00000000-0000-4000-8000-000000000002',
-          name: 'Angi',
-          initials: 'A',
-          role: 'smoker',
-          groupRole: 'member',
-          isFriend: true,
-          friendshipStatus: 'accepted',
-          isViewer: false,
-        },
-        {
-          id: 'mem-4',
-          user_id: '00000000-0000-4000-8000-000000000099',
-          name: 'Carlos Díaz',
-          initials: 'CD',
-          role: 'friend',
-          groupRole: 'member',
-          isFriend: false,
-          friendshipStatus: 'none',
-          isViewer: false,
-        },
-        {
-          id: 'mem-5',
-          user_id: '00000000-0000-4000-8000-000000000098',
-          name: 'Laura Pons',
-          initials: 'LP',
-          role: 'smoker',
-          groupRole: 'member',
-          isFriend: false,
-          friendshipStatus: 'none',
-          isViewer: false,
-        },
-      ]
-
       return NextResponse.json({
         success: true,
-        group: group || {
-          id: groupId,
-          name: 'Grupo de Apoyo Exhala',
-          description: 'Espacio común para compartir logros, hábitos y vitalidad.',
-          created_at: new Date(Date.now() - 3 * 86400000).toISOString(),
-        },
-        members: demoMembers,
-        isFallback: true,
+        group: group || null,
+        members: [],
       })
     }
 
