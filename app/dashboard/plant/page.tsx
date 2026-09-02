@@ -19,6 +19,9 @@ import {
   Loader2,
   Wind,
   Lock,
+  Coins,
+  TrendingUp,
+  Wallet,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
@@ -27,7 +30,7 @@ import { PLANT_SPECIES, PlantSpecies } from '@/components/GardenPlantVisualizer'
 import { dispatchPushAlertToFriends } from '@/lib/push-notifications'
 import BottomNav from '@/components/BottomNav'
 
-type PlantTab = 'active' | 'garden'
+type PlantTab = 'active' | 'garden' | 'earnings'
 
 interface FriendGardenData {
   id: string
@@ -38,6 +41,8 @@ interface FriendGardenData {
   lastWateredAt: string | null
   lastWateredByMeAt: string | null
   smokeFreeSince?: string | null
+  cigsPerDay?: number
+  packPrice?: number
   canWater?: boolean
   remainingCooldownSeconds?: number
 }
@@ -156,8 +161,8 @@ function PlantPageContent() {
             smoker_id,
             friend_id,
             status,
-            smoker:profiles!friendships_smoker_id_fkey(id, full_name, role, smoke_free_since),
-            friend:profiles!friendships_friend_id_fkey(id, full_name, role, smoke_free_since)
+            smoker:profiles!friendships_smoker_id_fkey(id, full_name, role, smoke_free_since, cigs_per_day, pack_price),
+            friend:profiles!friendships_friend_id_fkey(id, full_name, role, smoke_free_since, cigs_per_day, pack_price)
           `)
           .or(`smoker_id.eq.${user.id},friend_id.eq.${user.id}`)
           .eq('status', 'accepted')
@@ -201,6 +206,8 @@ function PlantPageContent() {
                 lastWateredAt: fLastWateredAt,
                 lastWateredByMeAt: null,
                 smokeFreeSince: rawFriend.smoke_free_since,
+                cigsPerDay: rawFriend.cigs_per_day || 15,
+                packPrice: Number(rawFriend.pack_price) || 5.5,
                 canWater: fCanWater,
                 remainingCooldownSeconds: fRemainingCooldown,
               }
@@ -371,6 +378,31 @@ function PlantPageContent() {
   const currentPlantIndex = Math.floor(effectiveTotalWaterings / 30)
   const currentPlantStage = effectiveTotalWaterings % 30
   const completedPlantsCount = currentPlantIndex
+
+  // Métricas financieras del sujeto actual (tú o tu amigo seleccionado)
+  const currentSubjectSmokeFree = isViewingOwnGarden
+    ? profile?.smoke_free_since
+    : currentSelectedFriend?.smokeFreeSince
+
+  const currentSubjectCigsPerDay = isViewingOwnGarden
+    ? profile?.cigs_per_day || 15
+    : currentSelectedFriend?.cigsPerDay || 15
+
+  const currentSubjectPackPrice = isViewingOwnGarden
+    ? Number(profile?.pack_price) || 5.5
+    : Number(currentSelectedFriend?.packPrice) || 5.5
+
+  const subjectDaysClean = currentSubjectSmokeFree
+    ? Math.max(0, Math.floor((Date.now() - new Date(currentSubjectSmokeFree).getTime()) / (1000 * 60 * 60 * 24)))
+    : 0
+
+  const subjectCostPerCig = currentSubjectPackPrice / 20
+  const subjectDailySavings = currentSubjectCigsPerDay * subjectCostPerCig
+  const subjectTotalMoneySaved = subjectDaysClean * subjectDailySavings
+  const subjectTotalCigsAvoided = subjectDaysClean * currentSubjectCigsPerDay
+  const subjectPacksAvoided = (subjectTotalCigsAvoided / 20).toFixed(1)
+  const subjectMonthlyProjected = subjectDailySavings * 30
+  const subjectYearlyProjected = subjectDailySavings * 365
 
   const displayedStage = isDemoActive ? demoStage : currentPlantStage
   const displayedSpeciesIndex = currentPlantIndex
@@ -697,11 +729,11 @@ function PlantPageContent() {
         {/* =================================================================== */}
         {/* 3. PESTAÑAS (TABS CON SUBRAYADO QUIETO Y ELEGANTE)                   */}
         {/* =================================================================== */}
-        <div className="flex gap-[22px] pt-[18px] px-[26px] pb-0 border-b border-[rgba(232,183,94,0.1)] relative z-10">
+        <div className="flex gap-[18px] pt-[18px] px-[24px] pb-0 border-b border-[rgba(232,183,94,0.1)] relative z-10 overflow-x-auto no-scrollbar">
           <button
             type="button"
             onClick={() => setActiveTab('active')}
-            className={`text-[14.5px] font-medium pb-[12px] relative transition-colors cursor-pointer ${
+            className={`text-[13.5px] font-medium pb-[12px] relative transition-colors cursor-pointer shrink-0 ${
               activeTab === 'active' ? 'text-[#E8B75E]' : 'text-[#7C9481] hover:text-[#F1EEE2]'
             }`}
           >
@@ -714,12 +746,25 @@ function PlantPageContent() {
           <button
             type="button"
             onClick={() => setActiveTab('garden')}
-            className={`text-[14.5px] font-medium pb-[12px] relative transition-colors cursor-pointer ${
+            className={`text-[13.5px] font-medium pb-[12px] relative transition-colors cursor-pointer shrink-0 ${
               activeTab === 'garden' ? 'text-[#E8B75E]' : 'text-[#7C9481] hover:text-[#F1EEE2]'
             }`}
           >
-            Colección ({completedPlantsCount})
+            Jardines ({completedPlantsCount})
             {activeTab === 'garden' && (
+              <span className="absolute left-0 right-0 bottom-[-1px] h-[2px] bg-[#E8B75E] rounded-full" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('earnings')}
+            className={`text-[13.5px] font-medium pb-[12px] relative transition-colors cursor-pointer shrink-0 ${
+              activeTab === 'earnings' ? 'text-[#E8B75E]' : 'text-[#7C9481] hover:text-[#F1EEE2]'
+            }`}
+          >
+            Ganancias
+            {activeTab === 'earnings' && (
               <span className="absolute left-0 right-0 bottom-[-1px] h-[2px] bg-[#E8B75E] rounded-full" />
             )}
           </button>
@@ -974,14 +1019,14 @@ function PlantPageContent() {
                 </div>
               )}
             </div>
-          ) : (
+          ) : activeTab === 'garden' ? (
             /* =============================================================== */
-            /* VISTA DE COLECCIÓN BOTÁNICA                                      */
+            /* VISTA DE JARDINES BOTÁNICOS COSECHADOS                          */
             /* =============================================================== */
             <div className="px-[20px] py-[16px] space-y-3 flex-1 overflow-y-auto no-scrollbar">
               <div className="text-center space-y-0.5 mb-2">
                 <h3 className="font-fraunces text-base text-[#F1EEE2]">
-                  {isViewingOwnGarden ? 'Tu Santuario Botánico' : `Colección de ${effectiveSubjectName}`}
+                  {isViewingOwnGarden ? 'Tus Jardines Cosechados' : `Jardines de ${effectiveSubjectName}`}
                 </h3>
                 <p className="text-xs text-[#7C9481]">
                   {completedPlantsCount} de {PLANT_SPECIES.length} especímenes cosechados
@@ -1042,6 +1087,116 @@ function PlantPageContent() {
                     </div>
                   )
                 })}
+              </div>
+            </div>
+          ) : (
+            /* =============================================================== */
+            /* VISTA DE RESUMEN DE GANANCIAS POR ABSTINENCIA                   */
+            /* =============================================================== */
+            <div className="px-[20px] py-[16px] space-y-4 flex-1 overflow-y-auto no-scrollbar">
+              <div className="text-center space-y-0.5 mb-1">
+                <h3 className="font-fraunces text-base text-[#F1EEE2]">
+                  {isViewingOwnGarden ? 'Tus Ganancias por Abstinencia' : `Ganancias de ${effectiveSubjectName}`}
+                </h3>
+                <p className="text-xs text-[#7C9481]">
+                  Dinero no gastado en tabaco y salud acumulada
+                </p>
+              </div>
+
+              {/* TARJETA HERO DE GANANCIAS */}
+              <div
+                className="rounded-[26px] p-[22px] border border-[rgba(232,183,94,0.18)] space-y-4 shadow-xl relative overflow-hidden"
+                style={{
+                  background: 'radial-gradient(120% 90% at 50% -10%, rgba(232,183,94,0.12) 0%, rgba(22,36,28,0.75) 50%, rgba(15,25,19,0.92) 100%)',
+                }}
+              >
+                <div className="flex items-center justify-between pb-3 border-b border-[rgba(232,183,94,0.1)]">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-full bg-[rgba(232,183,94,0.12)] border border-[rgba(232,183,94,0.25)] flex items-center justify-center text-[#E8B75E]">
+                      <Coins className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-fraunces font-medium text-[15.5px] text-[#F1EEE2] leading-tight">
+                        Ahorro Acumulado
+                      </h4>
+                      <span className="text-[10.5px] text-[#7C9481]">
+                        {isViewingOwnGarden ? 'Dinero retenido en tu bolsillo' : `Beneficio neto de ${effectiveSubjectName}`}
+                      </span>
+                    </div>
+                  </div>
+
+                  <span className="text-[10px] font-semibold tracking-wider text-[#52B788] bg-[rgba(82,183,136,0.12)] border border-[rgba(82,183,136,0.25)] px-2 py-0.5 rounded-full">
+                    AHORRO REAL
+                  </span>
+                </div>
+
+                {/* HERO STAT */}
+                <div className="text-center py-2 space-y-1">
+                  <span className="text-[11px] text-[#A9BBA4] uppercase tracking-wider font-medium">
+                    {isViewingOwnGarden ? 'Has retenido en tu bolsillo' : `${effectiveSubjectName} ha retenido`}
+                  </span>
+                  <div className="font-fraunces font-bold text-[38px] text-[#E8B75E] tracking-tight drop-shadow-[0_2px_12px_rgba(232,183,94,0.25)]">
+                    +{subjectTotalMoneySaved.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                  </div>
+                  <p className="text-[12px] text-[#7C9481]">
+                    En <strong className="text-[#F1EEE2] font-semibold">{subjectDaysClean} {subjectDaysClean === 1 ? 'día' : 'días'}</strong> sin fumar
+                  </p>
+                </div>
+
+                {/* 3 MÉTRICAS */}
+                <div className="grid grid-cols-3 gap-2 pt-1">
+                  <div className="p-2.5 rounded-xl bg-black/30 border border-[rgba(232,183,94,0.1)] text-center">
+                    <span className="text-[10px] text-[#7C9481] block truncate">No fumados</span>
+                    <span className="font-fraunces font-semibold text-[15px] text-[#F1EEE2] block mt-0.5">
+                      {subjectTotalCigsAvoided.toLocaleString('es-ES')}
+                    </span>
+                    <span className="text-[9.5px] text-[#A9BBA4]">cigarrillos</span>
+                  </div>
+
+                  <div className="p-2.5 rounded-xl bg-black/30 border border-[rgba(232,183,94,0.1)] text-center">
+                    <span className="text-[10px] text-[#7C9481] block truncate">Ahorro / día</span>
+                    <span className="font-fraunces font-semibold text-[15px] text-[#E8B75E] block mt-0.5">
+                      {subjectDailySavings.toFixed(2)} €
+                    </span>
+                    <span className="text-[9.5px] text-[#A9BBA4]">cada día</span>
+                  </div>
+
+                  <div className="p-2.5 rounded-xl bg-black/30 border border-[rgba(232,183,94,0.1)] text-center">
+                    <span className="text-[10px] text-[#7C9481] block truncate">Cajetillas</span>
+                    <span className="font-fraunces font-semibold text-[15px] text-[#52B788] block mt-0.5">
+                      {subjectPacksAvoided}
+                    </span>
+                    <span className="text-[9.5px] text-[#A9BBA4]">evitadas</span>
+                  </div>
+                </div>
+
+                {/* PROYECCIÓN */}
+                <div className="p-3.5 rounded-2xl bg-[rgba(255,255,255,0.02)] border border-[rgba(232,183,94,0.12)] space-y-2.5">
+                  <div className="flex items-center gap-1.5 text-xs text-[#A9BBA4] font-medium">
+                    <TrendingUp className="w-3.5 h-3.5 text-[#52B788]" />
+                    <span>Proyección de dinero en libertad</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-2 rounded-xl bg-black/35 border border-white/5 flex flex-col justify-between">
+                      <span className="text-[10px] text-[#7C9481]">En 1 mes (30 días)</span>
+                      <span className="font-fraunces font-bold text-[17px] text-[#F1EEE2] mt-1">
+                        +{subjectMonthlyProjected.toFixed(0)} €
+                      </span>
+                    </div>
+
+                    <div className="p-2 rounded-xl bg-black/35 border border-white/5 flex flex-col justify-between">
+                      <span className="text-[10px] text-[#7C9481]">En 1 año (365 días)</span>
+                      <span className="font-fraunces font-bold text-[17px] text-[#E8B75E] mt-1">
+                        +{subjectYearlyProjected.toFixed(0)} €
+                      </span>
+                    </div>
+                  </div>
+
+                  <p className="text-[11px] text-[#7C9481] text-center italic pt-0.5 leading-relaxed">
+                    🌿 Cada día limpio es salud para tus pulmones y libertad financiera para tu vida.
+                  </p>
+                </div>
               </div>
             </div>
           )}
