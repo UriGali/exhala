@@ -52,6 +52,24 @@ export async function POST(request: Request) {
       }
     }
 
+    const isDemoSmoker =
+      typeof smoker_id === 'string' &&
+      (smoker_id.startsWith('00000000-0000-4000-') || smoker_id.startsWith('demo-'))
+
+    if (isDemoSmoker) {
+      return NextResponse.json({
+        success: true,
+        demo: true,
+        data: {
+          id: 'demo-' + Date.now(),
+          smoker_id,
+          friend_id,
+          action_type,
+          created_at: new Date().toISOString(),
+        },
+      })
+    }
+
     const nowIso = new Date().toISOString()
     const { data, error } = await supabase
       .from('plant_actions')
@@ -69,7 +87,39 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: error.message }, { status: 500 })
     }
 
-    return NextResponse.json({ success: true, data })
+    // Calcular el nuevo total de riegos para responder con el progreso exacto
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('smoke_free_since')
+      .eq('id', smoker_id)
+      .maybeSingle()
+
+    const { count: newWaterCount } = await supabase
+      .from('plant_actions')
+      .select('created_at', { count: 'exact' })
+      .eq('smoker_id', smoker_id)
+      .eq('action_type', 'water')
+
+    let baseWaterings = 0
+    if (profile?.smoke_free_since) {
+      const daysSince = Math.max(
+        0,
+        Math.floor((Date.now() - new Date(profile.smoke_free_since).getTime()) / (1000 * 60 * 60 * 24))
+      )
+      baseWaterings = Math.max(0, daysSince * 2)
+    }
+
+    const updatedTotalWaterings = baseWaterings + (newWaterCount ?? 1)
+    const stage = updatedTotalWaterings % 30
+    const progressPercent = Math.min(100, Math.round((stage / 30) * 100))
+
+    return NextResponse.json({
+      success: true,
+      data,
+      totalWaterings: updatedTotalWaterings,
+      stage,
+      progressPercent,
+    })
   } catch (err: any) {
     console.error('[Plant Water API] Error:', err)
     return NextResponse.json({ success: false, error: err.message }, { status: 500 })

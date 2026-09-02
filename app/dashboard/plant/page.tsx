@@ -38,6 +38,8 @@ interface FriendGardenData {
   lastWateredAt: string | null
   lastWateredByMeAt: string | null
   smokeFreeSince?: string | null
+  canWater?: boolean
+  remainingCooldownSeconds?: number
 }
 
 function getInitials(name: string) {
@@ -64,7 +66,7 @@ function PlantPageContent() {
   const [selectedGardenId, setSelectedGardenId] = useState<string>('me')
 
   // Datos del propio usuario
-  const [myWaterings, setMyWaterings] = useState<number>(7)
+  const [myWaterings, setMyWaterings] = useState<number>(0)
   const [myLastWateredAt, setMyLastWateredAt] = useState<string | null>(null)
   const [timeRemainingSeconds, setTimeRemainingSeconds] = useState<number>(0)
 
@@ -131,32 +133,22 @@ function PlantPageContent() {
         setProfile(userProfile)
         if (userProfile.full_name) setUserName(userProfile.full_name)
 
-        // Cargar historial propio de riegos
-        const { data: myActions, count: myCount } = await supabase
-          .from('plant_actions')
-          .select('created_at', { count: 'exact' })
-          .eq('smoker_id', user.id)
-          .eq('action_type', 'water')
-          .order('created_at', { ascending: false })
-
-        const totalMyWaterings = myCount !== null && myCount !== undefined ? myCount : 7
-        setMyWaterings(totalMyWaterings)
-
-        if (myActions && myActions.length > 0) {
-          const lastDate = myActions[0].created_at
-          setMyLastWateredAt(lastDate)
-          const diffMs = Date.now() - new Date(lastDate).getTime()
-          const twelveHoursMs = 12 * 60 * 60 * 1000
-          if (diffMs < twelveHoursMs) {
-            setTimeRemainingSeconds(Math.floor((twelveHoursMs - diffMs) / 1000))
-          } else {
-            setTimeRemainingSeconds(0)
+        // 1. Cargar historial propio de riegos de forma sincronizada
+        try {
+          const res = await fetch(`/api/plant/status?smokerId=${user.id}&viewerId=${user.id}`)
+          if (res.ok) {
+            const pData = await res.json()
+            if (pData.success) {
+              setMyWaterings(pData.totalWaterings)
+              setMyLastWateredAt(pData.lastWateredAt)
+              setTimeRemainingSeconds(pData.remainingCooldownSeconds)
+            }
           }
-        } else {
-          setTimeRemainingSeconds(0)
+        } catch (e) {
+          console.warn('Error fetching own plant status:', e)
         }
 
-        // Cargar amigos conectados
+        // 2. Cargar amigos conectados y sincronizar su planta
         const { data: friendships } = await supabase
           .from('friendships')
           .select(`
@@ -171,43 +163,49 @@ function PlantPageContent() {
           .eq('status', 'accepted')
 
         if (friendships && friendships.length > 0) {
-          const friendsData: FriendGardenData[] = []
+          const rawFriendsList = friendships
+            .map((f) => (f.smoker_id === user.id ? (f as any).friend : (f as any).smoker))
+            .filter((rawFriend) => rawFriend && rawFriend.id)
 
-          for (const f of friendships) {
-            const rawFriend = f.smoker_id === user.id ? (f as any).friend : (f as any).smoker
-            if (!rawFriend || !rawFriend.id) continue
+          const friendsData: FriendGardenData[] = await Promise.all(
+            rawFriendsList.map(async (rawFriend) => {
+              let fTotalWaterings = 0
+              let fLastWateredAt: string | null = null
+              let fRemainingCooldown = 0
+              let fCanWater = true
 
-            const { count: waterCount, data: lastWater } = await supabase
-              .from('plant_actions')
-              .select('created_at', { count: 'exact' })
-              .eq('smoker_id', rawFriend.id)
-              .eq('action_type', 'water')
-              .order('created_at', { ascending: false })
-              .limit(1)
+              try {
+                const res = await fetch(`/api/plant/status?smokerId=${rawFriend.id}&viewerId=${user.id}`)
+                if (res.ok) {
+                  const pData = await res.json()
+                  if (pData.success) {
+                    fTotalWaterings = pData.totalWaterings
+                    fLastWateredAt = pData.lastWateredAt
+                    fRemainingCooldown = pData.remainingCooldownSeconds
+                    fCanWater = pData.canWater
+                  }
+                }
+              } catch (e) {
+                console.warn('Error fetching friend plant status:', e)
+              }
 
-            const { data: lastWaterByMe } = await supabase
-              .from('plant_actions')
-              .select('created_at')
-              .eq('smoker_id', rawFriend.id)
-              .eq('friend_id', user.id)
-              .eq('action_type', 'water')
-              .order('created_at', { ascending: false })
-              .limit(1)
+              const name = rawFriend.full_name || 'Compañero'
+              const initials = getInitials(name)
 
-            const name = rawFriend.full_name || 'Compañero'
-            const initials = getInitials(name)
-
-            friendsData.push({
-              id: rawFriend.id,
-              name,
-              initials,
-              role: rawFriend.role || 'smoker',
-              totalWaterings: waterCount || 0,
-              lastWateredAt: lastWater?.[0]?.created_at || null,
-              lastWateredByMeAt: lastWaterByMe?.[0]?.created_at || null,
-              smokeFreeSince: rawFriend.smoke_free_since,
+              return {
+                id: rawFriend.id,
+                name,
+                initials,
+                role: rawFriend.role || 'smoker',
+                totalWaterings: fTotalWaterings,
+                lastWateredAt: fLastWateredAt,
+                lastWateredByMeAt: null,
+                smokeFreeSince: rawFriend.smoke_free_since,
+                canWater: fCanWater,
+                remainingCooldownSeconds: fRemainingCooldown,
+              }
             })
-          }
+          )
 
           setFriendsGardens(friendsData)
 
@@ -285,15 +283,31 @@ function PlantPageContent() {
         },
         async (payload: any) => {
           const newAction = payload?.new
-          if (!newAction || newAction.friend_id === userId) return
-          setUnreadNotificationsCount((prev) => prev + 1)
-          const { data: friendProfile } = await supabase
-            .from('profiles')
-            .select('full_name')
-            .eq('id', newAction.friend_id)
-            .maybeSingle()
-          const friendName = friendProfile?.full_name?.split(' ')[0] || 'Un amigo'
-          setToastMessage(`💧 ¡${friendName} acaba de regar tu planta! (+1 vitalidad)`)
+          if (!newAction) return
+
+          // Actualizar riegos propios en tiempo real si nos regaron
+          if (newAction.smoker_id === userId) {
+            setMyWaterings((prev) => prev + 1)
+            if (newAction.friend_id !== userId) {
+              setUnreadNotificationsCount((prev) => prev + 1)
+              const { data: friendProfile } = await supabase
+                .from('profiles')
+                .select('full_name')
+                .eq('id', newAction.friend_id)
+                .maybeSingle()
+              const friendName = friendProfile?.full_name?.split(' ')[0] || 'Un amigo'
+              setToastMessage(`💧 ¡${friendName} acaba de regar tu planta! (+1 vitalidad)`)
+            }
+          }
+
+          // Actualizar amigos si alguien regó a un amigo
+          setFriendsGardens((prev) =>
+            prev.map((f) =>
+              f.id === newAction.smoker_id
+                ? { ...f, totalWaterings: f.totalWaterings + 1 }
+                : f
+            )
+          )
         }
       )
       .subscribe()
@@ -368,12 +382,17 @@ function PlantPageContent() {
   // Circunferencia del anillo SVG: r=84 -> C = 2 * PI * 84 = 527.78 ~ 528
   const strokeDashoffset = Math.round(528 - (528 * progressPercent) / 100)
 
+  // Cooldown activo según si vemos nuestro jardín o el de un amigo
+  const activeCooldownSeconds = isViewingOwnGarden
+    ? timeRemainingSeconds
+    : currentSelectedFriend?.remainingCooldownSeconds || 0
+
   // Acción de regar
   const handleWaterPlant = async () => {
     if (isWateringActive || !userId) return
-    if (isViewingOwnGarden && timeRemainingSeconds > 0) {
-      const hours = Math.floor(timeRemainingSeconds / 3600)
-      const minutes = Math.floor((timeRemainingSeconds % 3600) / 60)
+    if (activeCooldownSeconds > 0) {
+      const hours = Math.floor(activeCooldownSeconds / 3600)
+      const minutes = Math.floor((activeCooldownSeconds % 3600) / 60)
       setToastMessage(`Próximo riego disponible en ${hours}h ${minutes}m ⏳`)
       setTimeout(() => setToastMessage(null), 3000)
       return
@@ -388,27 +407,29 @@ function PlantPageContent() {
 
       if (!targetSmokerId) return
 
-      const { error: insertError } = await supabase.from('plant_actions').insert({
-        smoker_id: targetSmokerId,
-        friend_id: userId,
-        action_type: 'water',
-        created_at: nowIso,
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch('/api/plant/water', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({
+          smoker_id: targetSmokerId,
+          friend_id: userId,
+          action_type: 'water',
+        }),
       })
 
-      if (insertError) {
-        const { data: { session } } = await supabase.auth.getSession()
-        await fetch('/api/plant/water', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-          },
-          body: JSON.stringify({
-            smoker_id: targetSmokerId,
-            friend_id: userId,
-            action_type: 'water',
-          }),
-        }).catch(() => ({}))
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}))
+        if (errJson?.cooldown) {
+          setToastMessage('⏳ Debes esperar 12 horas entre riegos para esta planta.')
+          setTimeout(() => setToastMessage(null), 3500)
+          setIsWateringAnim(false)
+          setIsWateringActive(false)
+          return
+        }
       }
 
       setTimeout(() => {
@@ -422,12 +443,15 @@ function PlantPageContent() {
                     totalWaterings: nextFriendWaterings,
                     lastWateredAt: nowIso,
                     lastWateredByMeAt: nowIso,
+                    canWater: false,
+                    remainingCooldownSeconds: 12 * 60 * 60,
                   }
                 : f
             )
           )
-          setTimeRemainingSeconds(12 * 60 * 60)
-          setToastMessage(`💧 ¡Has regado la planta de ${currentSelectedFriend.name.split(' ')[0]}!`)
+          setToastMessage(
+            `💧 ¡Has regado la planta de ${currentSelectedFriend.name.split(' ')[0]}! (${nextFriendWaterings} riegos · Etapa ${nextFriendWaterings % 30}/30)`
+          )
         } else {
           const nextTotal = myWaterings + 1
           setMyWaterings(nextTotal)
@@ -824,24 +848,24 @@ function PlantPageContent() {
                     <ellipse cx="90" cy="185" rx="35" ry="7" fill="#6B4A2E" />
                     <ellipse cx="90" cy="183" rx="30" ry="5.5" fill="#2E4A34" />
 
-                    {/* Tallos orgánicos */}
+                    {/* Tallos orgánicos adaptados a la especie */}
                     <path
                       d="M90 183 C88 150 78 130 60 108"
-                      stroke="#5C7A5A"
+                      stroke={displayedSpecies.colorTheme.primary}
                       strokeWidth={Math.max(3, 3.5 + (displayedStage / 30) * 1.5)}
                       strokeLinecap="round"
                       fill="none"
                     />
                     <path
                       d="M90 183 C92 148 96 122 90 88"
-                      stroke="#5C7A5A"
+                      stroke={displayedSpecies.colorTheme.primary}
                       strokeWidth={Math.max(3.5, 4 + (displayedStage / 30) * 1.8)}
                       strokeLinecap="round"
                       fill="none"
                     />
                     <path
                       d="M90 183 C93 152 108 132 128 112"
-                      stroke="#5C7A5A"
+                      stroke={displayedSpecies.colorTheme.primary}
                       strokeWidth={Math.max(3, 3.5 + (displayedStage / 30) * 1.5)}
                       strokeLinecap="round"
                       fill="none"
@@ -851,29 +875,30 @@ function PlantPageContent() {
                     <g className="transition-all duration-700 origin-bottom" style={{ transform: `scale(${Math.max(0.6, 0.6 + (displayedStage / 30) * 0.45)})`, transformOrigin: '90px 140px' }}>
                       {/* Rama izquierda */}
                       <g>
-                        <ellipse cx="52" cy="98" rx="17" ry="11" fill="#7FA06B" transform="rotate(-25 52 98)" />
-                        <ellipse cx="66" cy="92" rx="15" ry="10" fill="#8FB578" transform="rotate(10 66 92)" />
+                        <ellipse cx="52" cy="98" rx="17" ry="11" fill={displayedSpecies.colorTheme.secondary} transform="rotate(-25 52 98)" />
+                        <ellipse cx="66" cy="92" rx="15" ry="10" fill={displayedSpecies.colorTheme.accent} transform="rotate(10 66 92)" />
                       </g>
 
                       {/* Copa central */}
                       <g>
-                        <ellipse cx="88" cy="76" rx="18" ry="12" fill="#8FB578" transform="rotate(-5 88 76)" />
-                        <ellipse cx="102" cy="88" rx="15" ry="10" fill="#7FA06B" transform="rotate(30 102 88)" />
-                        <ellipse cx="76" cy="88" rx="14" ry="9" fill="#9FC98A" transform="rotate(-30 76 88)" />
+                        <ellipse cx="88" cy="76" rx="18" ry="12" fill={displayedSpecies.colorTheme.secondary} transform="rotate(-5 88 76)" />
+                        <ellipse cx="102" cy="88" rx="15" ry="10" fill={displayedSpecies.colorTheme.accent} transform="rotate(30 102 88)" />
+                        <ellipse cx="76" cy="88" rx="14" ry="9" fill={displayedSpecies.colorTheme.bud} transform="rotate(-30 76 88)" />
                       </g>
 
                       {/* Rama derecha */}
                       <g>
-                        <ellipse cx="132" cy="102" rx="17" ry="11" fill="#7FA06B" transform="rotate(20 132 102)" />
-                        <ellipse cx="120" cy="94" rx="14" ry="9" fill="#9FC98A" transform="rotate(-15 120 94)" />
+                        <ellipse cx="132" cy="102" rx="17" ry="11" fill={displayedSpecies.colorTheme.secondary} transform="rotate(20 132 102)" />
+                        <ellipse cx="120" cy="94" rx="14" ry="9" fill={displayedSpecies.colorTheme.accent} transform="rotate(-15 120 94)" />
                       </g>
 
-                      {/* Floración o brotes si etapa >= 20 */}
-                      {displayedStage >= 20 && (
+                      {/* Floración o brotes si etapa >= 15 */}
+                      {displayedStage >= 15 && (
                         <g className="animate-pulse">
-                          <circle cx="88" cy="66" r="4.5" fill="#E8B75E" />
-                          <circle cx="56" cy="86" r="3.5" fill="#F472B6" />
-                          <circle cx="124" cy="90" r="3.5" fill="#F472B6" />
+                          <circle cx="88" cy="66" r="4.5" fill={displayedSpecies.colorTheme.bloom} />
+                          <circle cx="56" cy="86" r="3.5" fill={displayedSpecies.colorTheme.bloom} />
+                          <circle cx="124" cy="90" r="3.5" fill={displayedSpecies.colorTheme.bloom} />
+                          <circle cx="88" cy="66" r="2.2" fill={displayedSpecies.colorTheme.bud} />
                         </g>
                       )}
 
@@ -892,9 +917,9 @@ function PlantPageContent() {
                   </div>
                   <div className="text-[12.5px] text-[#7C9481] mt-[2px]">
                     {displayedStage} de 30 riegos ·{' '}
-                    {isViewingOwnGarden && timeRemainingSeconds > 0
-                      ? `Próximo riego en ${Math.floor(timeRemainingSeconds / 3600)}h ${Math.floor(
-                          (timeRemainingSeconds % 3600) / 60
+                    {activeCooldownSeconds > 0
+                      ? `Próximo riego en ${Math.floor(activeCooldownSeconds / 3600)}h ${Math.floor(
+                          (activeCooldownSeconds % 3600) / 60
                         )}m`
                       : 'Listo para nutrir hoy'}
                   </div>
@@ -914,8 +939,8 @@ function PlantPageContent() {
                     border: '1px solid rgba(232, 183, 94, 0.3)',
                   }}
                   title={
-                    isViewingOwnGarden && timeRemainingSeconds > 0
-                      ? 'Cooldown activo'
+                    activeCooldownSeconds > 0
+                      ? 'Cooldown de 12h activo'
                       : 'Regar planta'
                   }
                 >

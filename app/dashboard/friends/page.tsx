@@ -24,10 +24,15 @@ import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
 import FriendChatModal from '@/components/FriendChatModal'
+import GroupChatModal from '@/components/GroupChatModal'
+import CreateGroupModal from '@/components/CreateGroupModal'
+import StoriesBar from '@/components/StoriesBar'
+import CreateStoryModal from '@/components/CreateStoryModal'
+import StoryViewerModal, { UserStoriesGroup } from '@/components/StoryViewerModal'
 import { dispatchPushAlertToFriends } from '@/lib/push-notifications'
 import BottomNav from '@/components/BottomNav'
 
-type TabView = 'friends' | 'requests'
+type TabView = 'friends' | 'groups' | 'requests'
 
 interface FriendItem {
   id: string
@@ -38,6 +43,12 @@ interface FriendItem {
   role: 'smoker' | 'friend'
   isWatered: boolean
   smokeFreeSince?: string | null
+  plantSpecies?: string
+  plantStage?: number // 0 to 30
+  plantProgressPercent?: number
+  totalWaterings?: number
+  canWater?: boolean
+  cooldownSeconds?: number
 }
 
 interface FriendRequestItem {
@@ -84,6 +95,12 @@ const DEFAULT_DEMO_FRIENDS: FriendItem[] = [
     status: '3 días sin fumar',
     role: 'smoker',
     isWatered: false,
+    plantSpecies: 'Bonsái Zen de Jade',
+    plantStage: 6,
+    plantProgressPercent: 20,
+    totalWaterings: 6,
+    canWater: true,
+    cooldownSeconds: 0,
   },
   {
     id: '00000000-0000-4000-8000-000000000002',
@@ -92,7 +109,13 @@ const DEFAULT_DEMO_FRIENDS: FriendItem[] = [
     name: 'Angi',
     status: '3 días sin fumar',
     role: 'smoker',
-    isWatered: false,
+    isWatered: true,
+    plantSpecies: 'Bonsái Zen de Jade',
+    plantStage: 7,
+    plantProgressPercent: 23,
+    totalWaterings: 7,
+    canWater: false,
+    cooldownSeconds: 24000,
   },
   {
     id: '00000000-0000-4000-8000-000000000003',
@@ -163,6 +186,46 @@ export default function FriendsDashboard() {
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [processingId, setProcessingId] = useState<string | null>(null)
+
+  // Grupos de chat
+  const [groupsList, setGroupsList] = useState<any[]>([])
+  const [activeChatGroup, setActiveChatGroup] = useState<any | null>(null)
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState<boolean>(false)
+
+  // Cargar grupos de chat
+  const loadGroupsData = useCallback(async (currentUserId: string) => {
+    try {
+      const res = await fetch(`/api/groups?userId=${currentUserId}`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && Array.isArray(data.groups)) {
+          setGroupsList(data.groups)
+        }
+      }
+    } catch (err) {
+      console.warn('Error loading groups:', err)
+    }
+  }, [])
+
+  // Historias de 24h
+  const [storiesUsers, setStoriesUsers] = useState<UserStoriesGroup[]>([])
+  const [showCreateStoryModal, setShowCreateStoryModal] = useState<boolean>(false)
+  const [activeStoryUserIndex, setActiveStoryUserIndex] = useState<number | null>(null)
+
+  // Cargar historias de amigos y propias
+  const loadStoriesData = useCallback(async (currentUserId: string) => {
+    try {
+      const res = await fetch(`/api/stories?viewerId=${currentUserId}`)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && Array.isArray(data.users)) {
+          setStoriesUsers(data.users)
+        }
+      }
+    } catch (err) {
+      console.warn('Error loading stories:', err)
+    }
+  }, [])
 
   // SOS Crisis modal
   const [sosOpen, setSosOpen] = useState<boolean>(false)
@@ -388,7 +451,34 @@ export default function FriendsDashboard() {
       })
 
       if (accepted.length > 0) {
-        setFriendsList(accepted)
+        // Enriquecer amigos con estado botánico real sincronizado
+        const enriched = await Promise.all(
+          accepted.map(async (friend) => {
+            if (friend.role !== 'smoker') return friend
+            try {
+              const res = await fetch(`/api/plant/status?smokerId=${friend.id}&viewerId=${currentUserId}`)
+              if (res.ok) {
+                const pData = await res.json()
+                if (pData.success) {
+                  return {
+                    ...friend,
+                    plantSpecies: pData.species.name,
+                    plantStage: pData.stage,
+                    plantProgressPercent: pData.progressPercent,
+                    totalWaterings: pData.totalWaterings,
+                    canWater: pData.canWater,
+                    cooldownSeconds: pData.remainingCooldownSeconds,
+                    isWatered: !pData.canWater,
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn('Error fetching plant status for friend:', e)
+            }
+            return friend
+          })
+        )
+        setFriendsList(enriched)
       }
       setPendingReceived(received)
       setPendingSent(sent)
@@ -420,6 +510,8 @@ export default function FriendsDashboard() {
         if (profile?.full_name) setUserName(profile.full_name)
 
         await loadFriendsData(user.id)
+        await loadGroupsData(user.id)
+        await loadStoriesData(user.id)
         await loadUnreadCounts(user.id)
         await loadUnreadNotifications(user.id)
 
@@ -472,6 +564,44 @@ export default function FriendsDashboard() {
           )
           .subscribe()
 
+        // Realtime para riegos de plantas de amigos
+        const plantChannelName = `friends-plant-actions-${user.id}-${Date.now()}`
+        const plantChannel = supabase
+          .channel(plantChannelName)
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'plant_actions',
+            },
+            (payload: any) => {
+              const newAct = payload?.new
+              if (!newAct) return
+              setFriendsList((prev) =>
+                prev.map((f) => {
+                  if (f.id === newAct.smoker_id) {
+                    const nextTotal = (f.totalWaterings || 0) + 1
+                    const nextStage = nextTotal % 30
+                    const nextProgress = Math.min(100, Math.round((nextStage / 30) * 100))
+                    const isMeWhoWatered = newAct.friend_id === user.id
+                    return {
+                      ...f,
+                      totalWaterings: nextTotal,
+                      plantStage: nextStage,
+                      plantProgressPercent: nextProgress,
+                      canWater: isMeWhoWatered ? false : f.canWater,
+                      cooldownSeconds: isMeWhoWatered ? 12 * 3600 : f.cooldownSeconds,
+                      isWatered: isMeWhoWatered ? true : f.isWatered,
+                    }
+                  }
+                  return f
+                })
+              )
+            }
+          )
+          .subscribe()
+
         const unreadInterval = setInterval(() => {
           loadUnreadCounts(user.id)
         }, 3500)
@@ -479,6 +609,7 @@ export default function FriendsDashboard() {
         return () => {
           clearInterval(unreadInterval)
           supabase.removeChannel(inboxChannel)
+          supabase.removeChannel(plantChannel)
         }
       } catch (err) {
         console.error('Error initializing friends page:', err)
@@ -488,7 +619,7 @@ export default function FriendsDashboard() {
     }
 
     init()
-  }, [router, loadFriendsData, loadUnreadCounts, loadUnreadNotifications, showToast])
+  }, [router, loadFriendsData, loadGroupsData, loadStoriesData, loadUnreadCounts, loadUnreadNotifications, showToast])
 
   // Mini ciclo de respiración SOS
   useEffect(() => {
@@ -643,30 +774,91 @@ export default function FriendsDashboard() {
 
   // Regar planta del amigo
   const handleToggleWater = async (friend: FriendItem) => {
+    if (friend.canWater === false) {
+      const remainingSecs = friend.cooldownSeconds || 0
+      const hours = Math.floor(remainingSecs / 3600)
+      const minutes = Math.floor((remainingSecs % 3600) / 60)
+      showToast(`⏳ Esta planta ya fue regada. Disponible en ${hours}h ${minutes}m`)
+      return
+    }
+
+    const nextTotal = (friend.totalWaterings || 0) + 1
+    const nextStage = nextTotal % 30
+    const nextProgress = Math.min(100, Math.round((nextStage / 30) * 100))
+
+    // Optimistic UI update
     setFriendsList((prev) =>
-      prev.map((f) => (f.id === friend.id ? { ...f, isWatered: true } : f))
+      prev.map((f) =>
+        f.id === friend.id
+          ? {
+              ...f,
+              isWatered: true,
+              canWater: false,
+              cooldownSeconds: 12 * 3600,
+              totalWaterings: nextTotal,
+              plantStage: nextStage,
+              plantProgressPercent: nextProgress,
+            }
+          : f
+      )
     )
 
     if (userId && isValidUUID(friend.id) && friend.id !== userId) {
       try {
-        await supabase.from('plant_actions').insert({
-          smoker_id: friend.id,
-          friend_id: userId,
-          action_type: 'water',
+        const { data: sessionData } = await supabase.auth.getSession()
+        const res = await fetch('/api/plant/water', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(sessionData.session?.access_token
+              ? { Authorization: `Bearer ${sessionData.session.access_token}` }
+              : {}),
+          },
+          body: JSON.stringify({
+            smoker_id: friend.id,
+            friend_id: userId,
+            action_type: 'water',
+          }),
         })
-      } catch {}
+
+        if (res.ok) {
+          const waterRes = await res.json().catch(() => ({}))
+          if (waterRes.totalWaterings) {
+            setFriendsList((prev) =>
+              prev.map((f) =>
+                f.id === friend.id
+                  ? {
+                      ...f,
+                      totalWaterings: waterRes.totalWaterings,
+                      plantStage: waterRes.stage,
+                      plantProgressPercent: waterRes.progressPercent,
+                    }
+                  : f
+              )
+            )
+          }
+        } else {
+          const errData = await res.json().catch(() => ({}))
+          if (errData?.cooldown) {
+            showToast('⏳ Ya regaste esta planta recientemente. Cooldown de 12h activo.')
+            return
+          }
+        }
+      } catch (err) {
+        console.warn('Error watering via API:', err)
+      }
     }
 
     try {
       confetti({
-        particleCount: 35,
-        spread: 55,
+        particleCount: 45,
+        spread: 60,
         origin: { y: 0.65 },
         colors: ['#E8B75E', '#52B788', '#38BDF8'],
       })
     } catch {}
 
-    showToast(`💧 Has regado la planta de ${friend.name.split(' ')[0]}`)
+    showToast(`💧 ¡Has regado la planta de ${friend.name.split(' ')[0]}! (${nextTotal} riegos · Etapa ${nextStage}/30)`)
   }
 
   // Activar SOS de emergencia
@@ -787,13 +979,10 @@ export default function FriendsDashboard() {
         {/* 1. CABECERA                                                         */}
         {/* =================================================================== */}
         <header className="pt-[22px] px-[24px] pb-0 relative z-10 flex items-start justify-between">
-          <div className="flex items-baseline gap-[9px]">
+          <div className="flex items-center">
             <h1 className="font-fraunces font-medium text-[22px] text-[#F1EEE2] tracking-tight">
               Comunidad
             </h1>
-            <span className="text-[12.5px] text-[#7C9481]">
-              {friendsList.length} conexiones
-            </span>
           </div>
 
           <div className="flex gap-[8px]">
@@ -834,26 +1023,37 @@ export default function FriendsDashboard() {
         </header>
 
         {/* =================================================================== */}
-        {/* 2. CONTROL SEGMENTADO (MIS AMIGOS / SOLICITUDES)                    */}
+        {/* 2. CONTROL SEGMENTADO (MIS AMIGOS / GRUPOS / SOLICITUDES)          */}
         {/* =================================================================== */}
-        <div className="mx-[24px] mt-[20px] mb-0 flex bg-[rgba(255,255,255,0.03)] border border-[rgba(232,183,94,0.1)] rounded-[100px] p-[4px] relative z-10">
+        <div className="mx-[20px] mt-[20px] mb-0 flex bg-[rgba(255,255,255,0.03)] border border-[rgba(232,183,94,0.1)] rounded-[100px] p-[4px] relative z-10">
           <button
             type="button"
             onClick={() => setCurrentTab('friends')}
-            className={`flex-1 text-center text-[13px] font-semibold py-[9px] px-0 rounded-[100px] flex items-center justify-center gap-[6px] transition-all cursor-pointer ${
+            className={`flex-1 text-center text-[12.5px] font-semibold py-[8px] px-0 rounded-[100px] flex items-center justify-center transition-all cursor-pointer ${
               currentTab === 'friends'
                 ? 'bg-[rgba(232,183,94,0.12)] text-[#E8B75E]'
                 : 'text-[#7C9481] hover:text-[#F1EEE2]'
             }`}
           >
-            <span>Mis amigos</span>
-            <span className="opacity-75 font-normal">({friendsList.length})</span>
+            <span>Amigos</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setCurrentTab('groups')}
+            className={`flex-1 text-center text-[12.5px] font-semibold py-[8px] px-0 rounded-[100px] flex items-center justify-center transition-all cursor-pointer ${
+              currentTab === 'groups'
+                ? 'bg-[rgba(232,183,94,0.12)] text-[#E8B75E]'
+                : 'text-[#7C9481] hover:text-[#F1EEE2]'
+            }`}
+          >
+            <span>Grupos</span>
           </button>
 
           <button
             type="button"
             onClick={() => setCurrentTab('requests')}
-            className={`flex-1 text-center text-[13px] font-semibold py-[9px] px-0 rounded-[100px] flex items-center justify-center gap-[6px] transition-all cursor-pointer ${
+            className={`flex-1 text-center text-[12.5px] font-semibold py-[8px] px-0 rounded-[100px] flex items-center justify-center gap-[4px] transition-all cursor-pointer ${
               currentTab === 'requests'
                 ? 'bg-[rgba(232,183,94,0.12)] text-[#E8B75E]'
                 : 'text-[#7C9481] hover:text-[#F1EEE2]'
@@ -869,9 +1069,22 @@ export default function FriendsDashboard() {
         </div>
 
         {/* =================================================================== */}
+        {/* 2.5. BARRA DE HISTORIAS 24H (ESTILO INSTAGRAM)                      */}
+        {/* =================================================================== */}
+        <div className="mx-[20px] mt-[10px]">
+          <StoriesBar
+            currentUserId={userId}
+            currentUserName={userName}
+            usersWithStories={storiesUsers}
+            onOpenCreateStory={() => setShowCreateStoryModal(true)}
+            onOpenStoryViewer={(idx) => setActiveStoryUserIndex(idx)}
+          />
+        </div>
+
+        {/* =================================================================== */}
         {/* 3. CONTENIDO PRINCIPAL                                              */}
         {/* =================================================================== */}
-        <div className="flex-1 pt-[22px] px-[24px] pb-[4px] relative z-10 overflow-y-auto no-scrollbar">
+        <div className="flex-1 pt-[14px] px-[24px] pb-[4px] relative z-10 overflow-y-auto no-scrollbar">
           {currentTab === 'friends' ? (
             <>
               {/* SECCIÓN 1: DEJANDO DE FUMAR */}
@@ -888,72 +1101,122 @@ export default function FriendsDashboard() {
                     {quittingFriends.map((friend, idx) => {
                       const gradientClass = getAvatarGradientClass(idx)
                       const unread = unreadCounts[friend.id] || 0
+                      const stage = friend.plantStage ?? 6
+                      const progressPercent = friend.plantProgressPercent ?? Math.round((stage / 30) * 100)
+                      const speciesName = friend.plantSpecies || 'Bonsái Zen de Jade'
+                      const isCooldown = friend.canWater === false
 
                       return (
                         <div
                           key={friend.id}
-                          className="rounded-[20px] border border-[rgba(232,183,94,0.1)] p-[13px] flex items-center gap-[12px] transition-all hover:border-[rgba(232,183,94,0.25)]"
+                          className="rounded-[22px] border border-[rgba(232,183,94,0.14)] p-[14px] flex flex-col gap-[11px] transition-all hover:border-[rgba(232,183,94,0.3)] group"
                           style={{
                             background:
-                              'linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.01))',
+                              'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.015))',
                           }}
                         >
-                          {/* Avatar con punto de status verde */}
-                          <div
-                            onClick={() => handleOpenChat(friend)}
-                            className="w-[42px] h-[42px] rounded-full flex items-center justify-center text-[13.5px] font-semibold shrink-0 relative text-[#1B1710] cursor-pointer"
-                            style={{
-                              background:
-                                gradientClass === 'c1'
-                                  ? 'linear-gradient(145deg, #9FC98A, #6FA65C)'
-                                  : gradientClass === 'c2'
-                                  ? 'linear-gradient(145deg, #C9BCEF, #A796D8)'
-                                  : 'linear-gradient(145deg, #F0D08C, #E8B75E)',
-                            }}
-                          >
-                            {friend.initials}
-                            <span className="absolute -right-[1px] -bottom-[1px] w-[10px] h-[10px] rounded-full bg-[#6FCB8A] border-2 border-[#16241C]" />
-                          </div>
-
-                          {/* Info del amigo */}
-                          <div
-                            onClick={() => handleOpenChat(friend)}
-                            className="flex-1 min-w-0 cursor-pointer"
-                          >
-                            <div className="text-[14.5px] font-semibold text-[#F1EEE2] truncate">
-                              {friend.name}
-                            </div>
-                            <div className="text-[12px] text-[#E8B75E] mt-[1px] truncate">
-                              {friend.status}
-                            </div>
-                          </div>
-
-                          {/* Acciones: Regar y Chatear */}
-                          <div className="flex items-center gap-[7px] shrink-0">
-                            <button
-                              type="button"
-                              onClick={() => handleToggleWater(friend)}
-                              className="w-[32px] h-[32px] rounded-full bg-[rgba(232,183,94,0.07)] border border-[rgba(232,183,94,0.14)] flex items-center justify-center text-[13px] text-[#E8B75E] hover:bg-[rgba(232,183,94,0.18)] transition-all cursor-pointer active:scale-95"
-                              title="Regar su planta"
-                              aria-label="Regar planta"
-                            >
-                              💧
-                            </button>
-
-                            <button
-                              type="button"
+                          {/* FILA SUPERIOR: AVATAR, INFO Y ACCIONES */}
+                          <div className="flex items-center gap-[12px]">
+                            {/* Avatar con punto de status verde */}
+                            <div
                               onClick={() => handleOpenChat(friend)}
-                              className="w-[32px] h-[32px] rounded-full bg-[rgba(232,183,94,0.07)] border border-[rgba(232,183,94,0.14)] flex items-center justify-center text-[13px] text-[#E8B75E] hover:bg-[rgba(232,183,94,0.18)] transition-all cursor-pointer relative active:scale-95"
-                              title="Chatear"
-                              aria-label="Abrir chat"
+                              className="w-[42px] h-[42px] rounded-full flex items-center justify-center text-[13.5px] font-semibold shrink-0 relative text-[#1B1710] cursor-pointer shadow-sm"
+                              style={{
+                                background:
+                                  gradientClass === 'c1'
+                                    ? 'linear-gradient(145deg, #9FC98A, #6FA65C)'
+                                    : gradientClass === 'c2'
+                                    ? 'linear-gradient(145deg, #C9BCEF, #A796D8)'
+                                    : 'linear-gradient(145deg, #F0D08C, #E8B75E)',
+                              }}
                             >
-                              💬
-                              {unread > 0 && (
-                                <span className="absolute -top-[4px] -right-[4px] min-w-[15px] h-[15px] px-[3px] rounded-full bg-[#E8547C] text-white text-[9.5px] font-bold flex items-center justify-center border-2 border-[#16241C]">
-                                  {unread}
+                              {friend.initials}
+                              <span className="absolute -right-[1px] -bottom-[1px] w-[10px] h-[10px] rounded-full bg-[#6FCB8A] border-2 border-[#16241C]" />
+                            </div>
+
+                            {/* Info del amigo */}
+                            <div
+                              onClick={() => handleOpenChat(friend)}
+                              className="flex-1 min-w-0 cursor-pointer"
+                            >
+                              <div className="text-[14.5px] font-semibold text-[#F1EEE2] truncate">
+                                {friend.name}
+                              </div>
+                              <div className="text-[12px] text-[#E8B75E] mt-[1px] truncate flex items-center gap-1.5">
+                                <span>{friend.status}</span>
+                              </div>
+                            </div>
+
+                            {/* Acciones: Regar y Chatear */}
+                            <div className="flex items-center gap-[7px] shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleWater(friend)}
+                                className={`w-[34px] h-[34px] rounded-full flex items-center justify-center text-[13px] transition-all cursor-pointer active:scale-95 ${
+                                  isCooldown
+                                    ? 'bg-[rgba(82,183,136,0.12)] border border-[rgba(82,183,136,0.3)] text-[#52B788]'
+                                    : 'bg-[rgba(232,183,94,0.09)] border border-[rgba(232,183,94,0.22)] text-[#E8B75E] hover:bg-[rgba(232,183,94,0.2)] hover:scale-105'
+                                }`}
+                                title={isCooldown ? 'Planta ya regada hoy' : 'Regar planta (+1 vitalidad)'}
+                                aria-label="Regar planta"
+                              >
+                                {isCooldown ? '✓' : '💧'}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenChat(friend)}
+                                className="w-[34px] h-[34px] rounded-full bg-[rgba(232,183,94,0.07)] border border-[rgba(232,183,94,0.14)] flex items-center justify-center text-[13px] text-[#E8B75E] hover:bg-[rgba(232,183,94,0.18)] transition-all cursor-pointer relative active:scale-95"
+                                title="Chatear"
+                                aria-label="Abrir chat"
+                              >
+                                💬
+                                {unread > 0 && (
+                                  <span className="absolute -top-[4px] -right-[4px] min-w-[15px] h-[15px] px-[3px] rounded-full bg-[#E8547C] text-white text-[9.5px] font-bold flex items-center justify-center border-2 border-[#16241C]">
+                                    {unread}
+                                  </span>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* CAJA BOTÁNICA DE LA PLANTA DEL FUMADOR */}
+                          <div
+                            onClick={() => router.push(`/dashboard/plant?friendId=${friend.id}`)}
+                            className="rounded-[16px] bg-[rgba(232,183,94,0.035)] border border-[rgba(232,183,94,0.08)] p-[9px_12px] flex items-center gap-[11px] cursor-pointer hover:bg-[rgba(232,183,94,0.07)] transition-all"
+                            title="Ver su jardín botánico"
+                          >
+                            {/* Mini icono botánico */}
+                            <div className="w-[36px] h-[36px] rounded-full bg-[rgba(82,183,136,0.12)] border border-[rgba(82,183,136,0.25)] flex items-center justify-center text-[16px] shrink-0">
+                              🌿
+                            </div>
+
+                            {/* Especie, etapa y barra de progreso */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-baseline justify-between text-[11.5px]">
+                                <span className="font-fraunces font-medium text-[#F1EEE2] truncate">
+                                  {speciesName}
                                 </span>
-                              )}
-                            </button>
+                                <span className="text-[10.5px] font-semibold text-[#E8B75E] shrink-0 ml-2">
+                                  {stage}/30 · {progressPercent}%
+                                </span>
+                              </div>
+
+                              {/* Barra de progreso de maduración */}
+                              <div className="w-full h-[5px] rounded-full bg-[rgba(0,0,0,0.35)] overflow-hidden mt-[5px]">
+                                <div
+                                  className="h-full rounded-full transition-all duration-700"
+                                  style={{
+                                    width: `${Math.max(4, progressPercent)}%`,
+                                    background: 'linear-gradient(90deg, #52B788 0%, #E8B75E 100%)',
+                                  }}
+                                />
+                              </div>
+                            </div>
+
+                            <span className="text-[12px] text-[#7C9481] group-hover:text-[#E8B75E] transition-colors shrink-0 font-bold">
+                              →
+                            </span>
                           </div>
                         </div>
                       )
@@ -1062,6 +1325,92 @@ export default function FriendsDashboard() {
                 ＋ Buscar amigos por nombre
               </button>
             </>
+          ) : currentTab === 'groups' ? (
+            /* =============================================================== */
+            /* PESTAÑA: GRUPOS DE CHAT                                         */
+            /* =============================================================== */
+            <div className="space-y-4">
+              {/* CABECERA DE GRUPOS Y BOTÓN CREAR */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-fraunces italic text-[14px] text-[#A9BBA4]">
+                    Tus Grupos de Apoyo
+                  </span>
+                  <p className="text-[11px] text-[#7C9481]">
+                    Compañeros compartiendo racha limpia
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowCreateGroupModal(true)}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#1B1710] bg-gradient-to-r from-[#EFC471] to-[#E8B75E] py-1.5 px-3.5 rounded-full hover:scale-105 active:scale-95 transition-all shadow-sm cursor-pointer"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>Crear Grupo</span>
+                </button>
+              </div>
+
+              {/* LISTA DE GRUPOS */}
+              {groupsList.length === 0 ? (
+                <div className="py-12 text-center rounded-[24px] border border-dashed border-[rgba(232,183,94,0.2)] p-6 bg-[rgba(255,255,255,0.015)]">
+                  <div className="text-3xl mb-2">👥</div>
+                  <div className="font-fraunces text-base text-[#F1EEE2]">Sin grupos todavía</div>
+                  <p className="text-xs text-[#7C9481] mt-1 mb-4">
+                    Crea tu primer grupo con tus amigos para acompañarse en el camino.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowCreateGroupModal(true)}
+                    className="text-xs font-semibold text-[#1B1710] bg-gradient-to-r from-[#EFC471] to-[#E8B75E] py-2 px-4 rounded-full inline-flex items-center gap-1.5 cursor-pointer shadow-md"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>Crear Primer Grupo</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {groupsList.map((grp) => (
+                    <div
+                      key={grp.id}
+                      onClick={() => setActiveChatGroup(grp)}
+                      className="rounded-[22px] border border-[rgba(232,183,94,0.14)] p-[14px_16px] bg-[rgba(255,255,255,0.025)] hover:border-[rgba(232,183,94,0.3)] transition-all cursor-pointer group shadow-sm flex flex-col gap-2.5"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#EFC471] to-[#E8B75E] text-[#2B1C08] flex items-center justify-center font-bold text-sm shrink-0 shadow-sm">
+                            👥
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="text-[14px] font-medium text-[#F1EEE2] truncate group-hover:text-[#E8B75E] transition-colors">
+                              {grp.name}
+                            </h4>
+                            <p className="text-[11px] text-[#7C9481]">
+                              {grp.member_count} {grp.member_count === 1 ? 'miembro' : 'miembros'}
+                            </p>
+                          </div>
+                        </div>
+
+                        <span className="text-[11px] font-semibold text-[#E8B75E] bg-[rgba(232,183,94,0.1)] border border-[rgba(232,183,94,0.22)] px-2.5 py-1 rounded-full shrink-0 group-hover:scale-105 transition-transform">
+                          Chatear
+                        </span>
+                      </div>
+
+                      {grp.last_message ? (
+                        <div className="p-2 rounded-xl bg-[rgba(0,0,0,0.2)] border border-[rgba(232,183,94,0.06)] text-[11.5px] text-[#A9BBA4] truncate">
+                          <span className="text-[#E8B75E] font-medium">{grp.last_message.sender_name}: </span>
+                          <span>{grp.last_message.content}</span>
+                        </div>
+                      ) : grp.description ? (
+                        <p className="text-[11px] text-[#7C9481] italic truncate px-1">
+                          {grp.description}
+                        </p>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : (
             /* =============================================================== */
             /* PESTAÑA: SOLICITUDES PENDIENTES & CÓDIGO                         */
@@ -1422,6 +1771,102 @@ export default function FriendsDashboard() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* MODAL DE CHAT GRUPAL */}
+      {activeChatGroup && (
+        <GroupChatModal
+          group={activeChatGroup}
+          currentUserId={userId}
+          currentUserName={userName}
+          onClose={() => setActiveChatGroup(null)}
+          onFriendAdded={() => {
+            if (userId) loadFriendsData(userId)
+          }}
+        />
+      )}
+
+      {/* MODAL DE CREACIÓN DE GRUPO */}
+      {showCreateGroupModal && (
+        <CreateGroupModal
+          currentUserId={userId}
+          friends={friendsList.map((f) => ({
+            id: f.id,
+            name: f.name,
+            initials: f.initials,
+            role: f.role,
+          }))}
+          onClose={() => setShowCreateGroupModal(false)}
+          onGroupCreated={(newGroup) => {
+            setGroupsList((prev) => [newGroup, ...prev])
+            setActiveChatGroup(newGroup)
+            showToast(`🎉 ¡Grupo "${newGroup.name}" creado con éxito!`)
+          }}
+        />
+      )}
+
+      {/* MODAL DE CREACIÓN DE HISTORIA */}
+      {showCreateStoryModal && (
+        <CreateStoryModal
+          currentUserId={userId}
+          currentUserName={userName}
+          onClose={() => setShowCreateStoryModal(false)}
+          onStoryCreated={(newStory) => {
+            setStoriesUsers((prev) => {
+              const myIndex = prev.findIndex((u) => u.userId === userId)
+              const myInitials = (userName || 'TÚ')
+                .split(' ')
+                .map((w) => w[0])
+                .join('')
+                .slice(0, 2)
+                .toUpperCase()
+
+              const formattedStory = {
+                id: newStory.id || 'story-' + Date.now(),
+                mediaUrl: newStory.media_url || newStory.mediaUrl,
+                caption: newStory.caption,
+                createdAt: newStory.created_at || new Date().toISOString(),
+                expiresAt:
+                  newStory.expires_at ||
+                  new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+              }
+
+              if (myIndex !== -1) {
+                const updated = [...prev]
+                updated[myIndex] = {
+                  ...updated[myIndex],
+                  stories: [...updated[myIndex].stories, formattedStory],
+                }
+                return updated
+              } else {
+                return [
+                  {
+                    userId: userId || 'me',
+                    userName: userName || 'Tú',
+                    userInitials: myInitials,
+                    userRole: 'smoker',
+                    stories: [formattedStory],
+                  },
+                  ...prev,
+                ]
+              }
+            })
+            showToast('📸 ¡Historia publicada! Estará activa 24 horas.')
+          }}
+        />
+      )}
+
+      {/* MODAL VISOR DE HISTORIAS */}
+      {activeStoryUserIndex !== null && (
+        <StoryViewerModal
+          initialUserIndex={activeStoryUserIndex}
+          usersWithStories={storiesUsers}
+          currentUserId={userId}
+          onClose={() => setActiveStoryUserIndex(null)}
+          onSendCheer={(targetUserId, reaction) => {
+            showToast(`✨ Reacción enviada a tu compañero: ${reaction}`)
+          }}
+        />
       )}
     </div>
   )

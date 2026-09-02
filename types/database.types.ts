@@ -326,6 +326,108 @@ export interface Database {
           }
         ]
       }
+      groups: {
+        Row: {
+          id: string
+          name: string
+          description: string | null
+          created_by: string | null
+          avatar_url: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          description?: string | null
+          created_by?: string | null
+          avatar_url?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          description?: string | null
+          created_by?: string | null
+          avatar_url?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      group_members: {
+        Row: {
+          id: string
+          group_id: string
+          user_id: string
+          role: 'admin' | 'member'
+          joined_at: string
+        }
+        Insert: {
+          id?: string
+          group_id: string
+          user_id: string
+          role?: 'admin' | 'member'
+          joined_at?: string
+        }
+        Update: {
+          id?: string
+          group_id?: string
+          user_id?: string
+          role?: 'admin' | 'member'
+          joined_at?: string
+        }
+        Relationships: []
+      }
+      group_messages: {
+        Row: {
+          id: string
+          group_id: string
+          sender_id: string
+          content: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          group_id: string
+          sender_id: string
+          content: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          group_id?: string
+          sender_id?: string
+          content?: string
+          created_at?: string
+        }
+        Relationships: []
+      }
+      stories: {
+        Row: {
+          id: string
+          user_id: string
+          media_url: string
+          caption: string | null
+          created_at: string
+          expires_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          media_url: string
+          caption?: string | null
+          created_at?: string
+          expires_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          media_url?: string
+          caption?: string | null
+          created_at?: string
+          expires_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -356,5 +458,11 @@ export type PlantAction = Tables<'plant_actions'>
 export type SOSNotification = Tables<'sos_notifications'>
 export type Message = Tables<'messages'>
 export type PushSubscriptionRecord = Tables<'push_subscriptions'>
+export type Group = Tables<'groups'>
+export type GroupMember = Tables<'group_members'>
+export type GroupMessage = Tables<'group_messages'>
+export type Story = Tables<'stories'>
+
+
 
 

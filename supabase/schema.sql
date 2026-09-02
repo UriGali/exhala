@@ -408,4 +408,172 @@ CREATE POLICY "Users can manage their own push subscriptions"
         auth.uid() = user_id
     );
 
+-- ==============================================================================
+-- 2.9. GROUPS & GROUP MESSAGING
+-- ==============================================================================
+CREATE TABLE public.groups (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    description TEXT,
+    created_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    avatar_url TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+CREATE TABLE public.group_members (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES public.groups(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    CONSTRAINT unique_group_user UNIQUE (group_id, user_id)
+);
+
+CREATE TABLE public.group_messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES public.groups(id) ON DELETE CASCADE,
+    sender_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
+);
+
+CREATE INDEX idx_group_members_group_id ON public.group_members(group_id);
+CREATE INDEX idx_group_members_user_id ON public.group_members(user_id);
+CREATE INDEX idx_group_messages_group_id ON public.group_messages(group_id, created_at ASC);
+
+-- RLS: GROUPS
+ALTER TABLE public.groups ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Members can view their groups"
+    ON public.groups
+    FOR SELECT
+    TO authenticated
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.group_members
+            WHERE public.group_members.group_id = public.groups.id
+              AND public.group_members.user_id = auth.uid()
+        )
+    );
+
+CREATE POLICY "Authenticated users can create groups"
+    ON public.groups
+    FOR INSERT
+    TO authenticated
+    WITH CHECK (auth.uid() = created_by);
+
+-- RLS: GROUP MEMBERS
+ALTER TABLE public.group_members ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Members can view fellow group members"
+    ON public.group_members
+    FOR SELECT
+    TO authenticated
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.group_members gm
+            WHERE gm.group_id = public.group_members.group_id
+              AND gm.user_id = auth.uid()
+        )
+    );
+
+CREATE POLICY "Members can insert new group members"
+    ON public.group_members
+    FOR INSERT
+    TO authenticated
+    WITH CHECK (
+        auth.uid() = user_id
+        OR EXISTS (
+            SELECT 1 FROM public.group_members gm
+            WHERE gm.group_id = public.group_members.group_id
+              AND gm.user_id = auth.uid()
+        )
+    );
+
+-- RLS: GROUP MESSAGES
+ALTER TABLE public.group_messages ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Group members can view group messages"
+    ON public.group_messages
+    FOR SELECT
+    TO authenticated
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.group_members
+            WHERE public.group_members.group_id = public.group_messages.group_id
+              AND public.group_members.user_id = auth.uid()
+        )
+    );
+
+CREATE POLICY "Group members can send group messages"
+    ON public.group_messages
+    FOR INSERT
+    TO authenticated
+    WITH CHECK (
+        auth.uid() = sender_id
+        AND EXISTS (
+            SELECT 1 FROM public.group_members
+            WHERE public.group_members.group_id = public.group_messages.group_id
+              AND public.group_members.user_id = auth.uid()
+        )
+    );
+
+-- ==============================================================================
+-- 2.10. STORIES (HISTORIAS DE 24 HORAS)
+-- ==============================================================================
+CREATE TABLE public.stories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    media_url TEXT NOT NULL,
+    caption TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT (timezone('utc'::text, now()) + interval '24 hours')
+);
+
+CREATE INDEX idx_stories_user_id ON public.stories(user_id);
+CREATE INDEX idx_stories_expires_at ON public.stories(expires_at DESC);
+
+-- RLS: STORIES
+ALTER TABLE public.stories ENABLE ROW LEVEL SECURITY;
+
+-- Ver historias activas de uno mismo o de amigos conectados
+CREATE POLICY "Users can view active stories of friends and themselves"
+    ON public.stories
+    FOR SELECT
+    TO authenticated
+    USING (
+        expires_at > timezone('utc'::text, now())
+        AND (
+            auth.uid() = user_id
+            OR EXISTS (
+                SELECT 1 FROM public.friendships
+                WHERE status = 'accepted'
+                  AND (
+                    (smoker_id = auth.uid() AND friend_id = public.stories.user_id)
+                    OR (friend_id = auth.uid() AND smoker_id = public.stories.user_id)
+                  )
+            )
+        )
+    );
+
+-- Publicar historias propias
+CREATE POLICY "Users can insert their own stories"
+    ON public.stories
+    FOR INSERT
+    TO authenticated
+    WITH CHECK (
+        auth.uid() = user_id
+    );
+
+-- Eliminar historias propias si se desea
+CREATE POLICY "Users can delete their own stories"
+    ON public.stories
+    FOR DELETE
+    TO authenticated
+    USING (
+        auth.uid() = user_id
+    );
+
+
+
 
