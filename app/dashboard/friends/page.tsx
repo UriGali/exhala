@@ -507,12 +507,11 @@ export default function FriendsDashboard() {
         // Enriquecer amigos con estado botánico real sincronizado
         const enriched = await Promise.all(
           accepted.map(async (friend) => {
-            if (friend.role !== 'smoker') return friend
             try {
               const res = await fetch(`/api/plant/status?smokerId=${friend.id}&viewerId=${currentUserId}`)
               if (res.ok) {
                 const pData = await res.json()
-                if (pData.success) {
+                if (pData.success && pData.species) {
                   return {
                     ...friend,
                     plantSpecies: pData.species.name,
@@ -1218,7 +1217,7 @@ export default function FriendsDashboard() {
                     {quittingFriends.map((friend, idx) => {
                       const gradientClass = getAvatarGradientClass(idx)
                       const unread = unreadCounts[friend.id] || 0
-                      const stage = friend.plantStage ?? 6
+                      const stage = friend.plantStage ?? (friend.totalWaterings !== undefined ? friend.totalWaterings % 30 : 0)
                       const progressPercent = friend.plantProgressPercent ?? Math.round((stage / 30) * 100)
                       const speciesName = friend.plantSpecies || 'Bonsái Zen de Jade'
                       const isCooldown = friend.canWater === false

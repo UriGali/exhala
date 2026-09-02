@@ -102,14 +102,16 @@ export async function POST(request: Request) {
 
     let baseWaterings = 0
     if (profile?.smoke_free_since) {
-      const daysSince = Math.max(
-        0,
-        Math.floor((Date.now() - new Date(profile.smoke_free_since).getTime()) / (1000 * 60 * 60 * 24))
-      )
-      baseWaterings = Math.max(0, daysSince * 2)
+      const time = new Date(profile.smoke_free_since).getTime()
+      if (!isNaN(time)) {
+        const daysSince = Math.max(0, Math.floor((Date.now() - time) / (1000 * 60 * 60 * 24)))
+        baseWaterings = Math.max(0, daysSince * 2)
+      }
     }
 
-    const updatedTotalWaterings = baseWaterings + (newWaterCount ?? 1)
+    const wateringsFromDb = typeof newWaterCount === 'number' && !isNaN(newWaterCount) ? newWaterCount : 1
+    const rawUpdated = baseWaterings + wateringsFromDb
+    const updatedTotalWaterings = isNaN(rawUpdated) || rawUpdated < 0 ? 0 : rawUpdated
     const stage = updatedTotalWaterings % 30
     const progressPercent = Math.min(100, Math.round((stage / 30) * 100))
 

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { PLANT_SPECIES } from '@/components/GardenPlantVisualizer'
+import { PLANT_SPECIES } from '@/lib/plant-species'
 
 const SUPABASE_URL =
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://yzkwoeauwusrklvpxupc.supabase.co'
@@ -31,7 +31,7 @@ export async function GET(request: Request) {
       .eq('id', smokerId)
       .maybeSingle()
 
-    // 2. Obtener total de riegos
+    // 2. Obtener total de riegos registrados en plant_actions
     const { count: waterCount, data: lastWaterList } = await supabase
       .from('plant_actions')
       .select('created_at', { count: 'exact' })
@@ -43,16 +43,17 @@ export async function GET(request: Request) {
     // Base según días limpios (2 riegos por cada día sin fumar)
     let baseWaterings = 0
     if (profile?.smoke_free_since) {
-      const daysSince = Math.max(
-        0,
-        Math.floor((Date.now() - new Date(profile.smoke_free_since).getTime()) / (1000 * 60 * 60 * 24))
-      )
-      baseWaterings = Math.max(0, daysSince * 2)
+      const smokeFreeTime = new Date(profile.smoke_free_since).getTime()
+      if (!isNaN(smokeFreeTime)) {
+        const daysSince = Math.max(0, Math.floor((Date.now() - smokeFreeTime) / (1000 * 60 * 60 * 24)))
+        baseWaterings = Math.max(0, daysSince * 2)
+      }
     }
 
     // Cada riego en plant_actions le suma 1 riego más a lo que lleva acumulado
-    const actionWaterings = waterCount ?? 0
-    const totalWaterings = baseWaterings + actionWaterings
+    const actionWaterings = typeof waterCount === 'number' && !isNaN(waterCount) ? waterCount : 0
+    const rawTotalWaterings = baseWaterings + actionWaterings
+    const totalWaterings = isNaN(rawTotalWaterings) || rawTotalWaterings < 0 ? 0 : rawTotalWaterings
 
     const lastWateredAt = lastWaterList?.[0]?.created_at || null
 
@@ -72,19 +73,29 @@ export async function GET(request: Request) {
         .maybeSingle()
 
       if (viewerLastWater?.created_at) {
-        const diffMs = Date.now() - new Date(viewerLastWater.created_at).getTime()
-        const twelveHoursMs = 12 * 60 * 60 * 1000
-        if (diffMs < twelveHoursMs) {
-          canWater = false
-          remainingCooldownSeconds = Math.ceil((twelveHoursMs - diffMs) / 1000)
+        const lastWaterTime = new Date(viewerLastWater.created_at).getTime()
+        if (!isNaN(lastWaterTime)) {
+          const diffMs = Date.now() - lastWaterTime
+          const twelveHoursMs = 12 * 60 * 60 * 1000
+          if (diffMs < twelveHoursMs) {
+            canWater = false
+            remainingCooldownSeconds = Math.ceil((twelveHoursMs - diffMs) / 1000)
+          }
         }
       }
     }
 
     // 4. Calcular especie y etapa (30 riegos por espécimen)
-    const speciesIndex = Math.floor(totalWaterings / 30)
+    const speciesIndex = Math.floor(totalWaterings / 30) || 0
     const stage = totalWaterings % 30
-    const species = PLANT_SPECIES[speciesIndex % PLANT_SPECIES.length]
+    const speciesList = Array.isArray(PLANT_SPECIES) && PLANT_SPECIES.length > 0 ? PLANT_SPECIES : []
+    const species =
+      speciesList[speciesIndex % speciesList.length] || {
+        id: 'bonsai',
+        name: 'Bonsái Zen de Jade',
+        scientificName: 'Crassula Ovata Zen',
+        healingBenefit: 'A los 30 riegos, tus vías respiratorias recuperan su elasticidad natural.',
+      }
     const progressPercent = Math.min(100, Math.round((stage / 30) * 100))
 
     return NextResponse.json({

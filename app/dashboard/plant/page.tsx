@@ -26,7 +26,7 @@ import {
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
-import { PLANT_SPECIES, PlantSpecies } from '@/components/GardenPlantVisualizer'
+import { PLANT_SPECIES, PlantSpecies } from '@/lib/plant-species'
 import { dispatchPushAlertToFriends } from '@/lib/push-notifications'
 import BottomNav from '@/components/BottomNav'
 
@@ -68,7 +68,13 @@ function PlantPageContent() {
   const [loading, setLoading] = useState<boolean>(true)
 
   // Selección de jardín: 'me' o el ID de un amigo
-  const [selectedGardenId, setSelectedGardenId] = useState<string>('me')
+  const [selectedGardenId, setSelectedGardenId] = useState<string>(initialFriendParam || 'me')
+
+  useEffect(() => {
+    if (initialFriendParam) {
+      setSelectedGardenId(initialFriendParam)
+    }
+  }, [initialFriendParam])
 
   // Datos del propio usuario
   const [myWaterings, setMyWaterings] = useState<number>(0)
