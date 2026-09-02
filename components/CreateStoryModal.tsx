@@ -3,6 +3,7 @@
 import React, { useState, useRef } from 'react'
 import { X, Camera, Image as ImageIcon, Sparkles, Loader2, Clock, Check } from 'lucide-react'
 import confetti from 'canvas-confetti'
+import { supabase } from '@/lib/supabase/client'
 
 interface CreateStoryModalProps {
   currentUserId: string | null
@@ -74,9 +75,15 @@ export default function CreateStoryModal({
     setErrorMsg(null)
 
     try {
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData?.session?.access_token
+
       const res = await fetch('/api/stories', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           user_id: currentUserId,
           media_url: selectedImage,

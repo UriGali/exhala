@@ -215,7 +215,12 @@ export default function FriendsDashboard() {
   // Cargar historias de amigos y propias
   const loadStoriesData = useCallback(async (currentUserId: string) => {
     try {
-      const res = await fetch(`/api/stories?viewerId=${currentUserId}`)
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData?.session?.access_token
+
+      const res = await fetch(`/api/stories?viewerId=${currentUserId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
       if (res.ok) {
         const data = await res.json()
         if (data.success && Array.isArray(data.users)) {
@@ -604,10 +609,17 @@ export default function FriendsDashboard() {
 
         const unreadInterval = setInterval(() => {
           loadUnreadCounts(user.id)
-        }, 3500)
+          loadStoriesData(user.id)
+        }, 5000)
+
+        const handleFocus = () => {
+          loadStoriesData(user.id)
+        }
+        window.addEventListener('focus', handleFocus)
 
         return () => {
           clearInterval(unreadInterval)
+          window.removeEventListener('focus', handleFocus)
           supabase.removeChannel(inboxChannel)
           supabase.removeChannel(plantChannel)
         }
