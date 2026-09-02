@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { sendWebPushToUsers } from '@/lib/push-service'
 
 const SUPABASE_URL =
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://yzkwoeauwusrklvpxupc.supabase.co'
@@ -150,6 +151,41 @@ export async function POST(request: Request) {
         },
         { status: 500 }
       )
+    }
+
+    // Despachar notificación a todos los amigos conectados en segundo plano
+    try {
+      const { data: authorProf } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', user_id)
+        .maybeSingle()
+      const authorName = authorProf?.full_name || 'Un amigo'
+
+      const { data: friendships } = await supabase
+        .from('friendships')
+        .select('friend_id, smoker_id')
+        .or(`smoker_id.eq.${user_id},friend_id.eq.${user_id}`)
+        .eq('status', 'accepted')
+
+      const friendIds = (friendships || [])
+        .map((f) => (f.smoker_id === user_id ? f.friend_id : f.smoker_id))
+        .filter((id) => id && id !== user_id)
+
+      const uniqueFriendIds = Array.from(new Set(friendIds))
+
+      if (uniqueFriendIds.length > 0) {
+        sendWebPushToUsers({
+          userIds: uniqueFriendIds,
+          title: `📸 ¡Nueva historia de ${authorName}!`,
+          body: caption?.trim()
+            ? `${authorName}: "${caption.trim()}"`
+            : `${authorName} ha subido una nueva foto a su historia. ¡Toca para verla!`,
+          url: '/dashboard/friends',
+        }).catch((e) => console.warn('[Stories POST API] Push dispatch notice:', e))
+      }
+    } catch (e) {
+      console.warn('[Stories POST API] Push notify error:', e)
     }
 
     return NextResponse.json({

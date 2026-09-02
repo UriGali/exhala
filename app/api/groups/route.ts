@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { sendWebPushToUsers } from '@/lib/push-service'
 
 const SUPABASE_URL =
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://yzkwoeauwusrklvpxupc.supabase.co'
@@ -211,6 +212,28 @@ export async function POST(request: Request) {
     }))
 
     await supabase.from('group_members').insert(membershipRows)
+
+    // 3. Despachar notificación a los miembros añadidos en segundo plano
+    try {
+      const targetMemberIds = member_ids.filter((mId: string) => mId && mId !== created_by)
+      if (targetMemberIds.length > 0) {
+        const { data: creatorProf } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', created_by)
+          .maybeSingle()
+        const creatorName = creatorProf?.full_name || 'Un amigo'
+
+        sendWebPushToUsers({
+          userIds: targetMemberIds,
+          title: `👥 Nuevo grupo: ${name.trim()}`,
+          body: `${creatorName} te ha añadido al grupo "${name.trim()}". ¡Entra a saludar!`,
+          url: '/dashboard/friends',
+        }).catch((e) => console.warn('[Groups POST API] Push dispatch notice:', e))
+      }
+    } catch (e) {
+      console.warn('[Groups POST API] Push notify error:', e)
+    }
 
     return NextResponse.json({ success: true, group })
   } catch (err: any) {

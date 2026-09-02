@@ -206,3 +206,127 @@ export async function dispatchPushMessageToFriend(
     return { success: false }
   }
 }
+
+/**
+ * Dispatches Push Notification to friends when a user uploads a story.
+ */
+export async function dispatchPushStoryNotification(
+  userId: string,
+  userName: string,
+  caption?: string
+): Promise<{ success: boolean }> {
+  try {
+    const { data: friendships } = await supabase
+      .from('friendships')
+      .select('friend_id, smoker_id')
+      .or(`smoker_id.eq.${userId},friend_id.eq.${userId}`)
+      .eq('status', 'accepted')
+
+    if (!friendships || friendships.length === 0) return { success: true }
+
+    const friendIds = Array.from(
+      new Set(
+        friendships
+          .map((f) => (f.smoker_id === userId ? f.friend_id : f.smoker_id))
+          .filter((id) => id && id !== userId)
+      )
+    )
+
+    if (friendIds.length === 0) return { success: true }
+
+    const { data: { session } } = await supabase.auth.getSession()
+
+    const response = await fetch('/api/push/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      },
+      body: JSON.stringify({
+        friendIds,
+        title: `📸 ¡Nueva historia de ${userName}!`,
+        body: caption?.trim()
+          ? `${userName}: "${caption.trim()}"`
+          : `${userName} ha subido una nueva foto a su historia. ¡Toca para verla!`,
+        url: '/dashboard/friends',
+      }),
+    })
+
+    const data = await response.json().catch(() => ({}))
+    return { success: !!data?.success }
+  } catch (err) {
+    console.warn('Error dispatching story push:', err)
+    return { success: false }
+  }
+}
+
+/**
+ * Dispatches Push Notification when a group is created.
+ */
+export async function dispatchPushGroupCreated(
+  creatorName: string,
+  groupName: string,
+  targetMemberIds: string[]
+): Promise<{ success: boolean }> {
+  try {
+    if (!targetMemberIds || targetMemberIds.length === 0) return { success: true }
+
+    const { data: { session } } = await supabase.auth.getSession()
+
+    const response = await fetch('/api/push/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      },
+      body: JSON.stringify({
+        friendIds: targetMemberIds,
+        title: `👥 Nuevo grupo: ${groupName}`,
+        body: `${creatorName} te ha añadido al grupo "${groupName}". ¡Entra a saludar!`,
+        url: '/dashboard/friends',
+      }),
+    })
+
+    const data = await response.json().catch(() => ({}))
+    return { success: !!data?.success }
+  } catch (err) {
+    console.warn('Error dispatching group created push:', err)
+    return { success: false }
+  }
+}
+
+/**
+ * Dispatches Push Notification when a message is sent in a group.
+ */
+export async function dispatchPushGroupMessage(
+  senderName: string,
+  groupName: string,
+  content: string,
+  targetMemberIds: string[]
+): Promise<{ success: boolean }> {
+  try {
+    if (!targetMemberIds || targetMemberIds.length === 0) return { success: true }
+
+    const { data: { session } } = await supabase.auth.getSession()
+
+    const response = await fetch('/api/push/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      },
+      body: JSON.stringify({
+        friendIds: targetMemberIds,
+        title: `💬 ${groupName}: ${senderName}`,
+        body: content,
+        url: '/dashboard/friends',
+      }),
+    })
+
+    const data = await response.json().catch(() => ({}))
+    return { success: !!data?.success }
+  } catch (err) {
+    console.warn('Error dispatching group message push:', err)
+    return { success: false }
+  }
+}

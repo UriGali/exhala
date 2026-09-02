@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { sendWebPushToUsers } from '@/lib/push-service'
 
 const SUPABASE_URL =
   process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://yzkwoeauwusrklvpxupc.supabase.co'
@@ -146,6 +147,44 @@ export async function POST(
           },
         },
       })
+    }
+
+    // Despachar notificación a los otros miembros del grupo en segundo plano
+    try {
+      // 1. Obtener nombre del grupo
+      const { data: groupData } = await supabase
+        .from('groups')
+        .select('name')
+        .eq('id', groupId)
+        .maybeSingle()
+      const groupName = groupData?.name || 'Grupo'
+
+      // 2. Nombre del remitente
+      const senderData: any = newMsg.sender
+      const senderObj = Array.isArray(senderData) ? senderData[0] : senderData
+      const senderName = senderObj?.full_name || 'Compañero'
+
+      // 3. Miembros del grupo
+      const { data: members } = await supabase
+        .from('group_members')
+        .select('user_id')
+        .eq('group_id', groupId)
+        .neq('user_id', sender_id)
+
+      const recipientIds = (members || [])
+        .map((m) => m.user_id)
+        .filter((uid) => uid && uid !== sender_id)
+
+      if (recipientIds.length > 0) {
+        sendWebPushToUsers({
+          userIds: recipientIds,
+          title: `💬 ${groupName}: ${senderName}`,
+          body: content.trim(),
+          url: '/dashboard/friends',
+        }).catch((e) => console.warn('[Group Messages POST API] Push dispatch notice:', e))
+      }
+    } catch (pushErr) {
+      console.warn('[Group Messages POST API] Push notify error:', pushErr)
     }
 
     return NextResponse.json({ success: true, message: newMsg })
