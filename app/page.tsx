@@ -56,7 +56,7 @@ export default function OnboardingLoginPage() {
               (user.user_metadata?.role as UserRole) ||
               'smoker'
 
-            router.replace(userRole === 'friend' ? '/dashboard/friends' : '/dashboard/smoker')
+            router.replace(userRole === 'friend' ? '/dashboard/friends' : '/dashboard/plant')
             return
           }
         } catch (profileErr) {
@@ -65,7 +65,7 @@ export default function OnboardingLoginPage() {
 
         // Si falló temporalmente la consulta por red, usar metadatos locales de sesión
         const cachedRole: UserRole = (user.user_metadata?.role as UserRole) || 'smoker'
-        router.replace(cachedRole === 'friend' ? '/dashboard/friends' : '/dashboard/smoker')
+        router.replace(cachedRole === 'friend' ? '/dashboard/friends' : '/dashboard/plant')
       } catch (err) {
         console.warn('Error checking persistent session:', err)
         if (isMounted) setCheckingSession(false)
@@ -165,7 +165,7 @@ export default function OnboardingLoginPage() {
             (data.user.user_metadata?.role as UserRole) ||
             'smoker'
 
-          const destination = userRole === 'friend' ? '/dashboard/friends' : '/dashboard/smoker'
+          const destination = userRole === 'friend' ? '/dashboard/friends' : '/dashboard/plant'
           router.push(destination)
         }
       } else {

@@ -1,5 +1,64 @@
 @import "tailwindcss";
 
+:root {
+  --ink: #16241C;
+  --ink-deep: #0F1913;
+  --glass: rgba(230, 240, 227, 0.06);
+  --glass-border: rgba(232, 183, 94, 0.14);
+  --sage: #A9BBA4;
+  --sage-dim: #7C9481;
+  --parchment: #F1EEE2;
+  --amber: #E8B75E;
+  --amber-soft: rgba(232, 183, 94, 0.35);
+  --coral: #E8547C;
+  --coral-soft: rgba(232, 84, 124, 0.28);
+  --clay: #8B5E3C;
+  --clay-dark: #6B4A2E;
+}
+
+body {
+  font-family: 'Work Sans', sans-serif;
+  color: var(--parchment);
+}
+
+.font-fraunces {
+  font-family: 'Fraunces', serif;
+}
+
+.font-work {
+  font-family: 'Work Sans', sans-serif;
+}
+
+@keyframes breathe {
+  0%, 100% {
+    opacity: 0.7;
+    transform: translateX(-50%) scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1.05);
+  }
+}
+
+.animate-breathe {
+  animation: breathe 5s ease-in-out infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+.animate-pulse-ring {
+  animation: pulse-ring 2.6s ease-out infinite;
+}
+
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar {
     display: none;

@@ -1,36 +1,31 @@
 'use client'
 
 import React, { useState, useEffect, useMemo, useCallback, Suspense } from 'react'
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
-  Sprout,
+  Bell,
+  HeartPulse,
   Droplets,
   Sparkles,
-  TreePine,
-  Flower2,
   Clock,
-  CheckCircle2,
-  Lock,
-  ChevronRight,
-  Info,
-  HeartPulse,
-  Award,
-  Wind,
-  Sun,
-  ShieldCheck,
   Check,
-  Users,
-  UserPlus,
-  Bell,
   X,
-  MessageCircle,
+  UserPlus,
+  Share2,
+  Copy,
+  CheckCheck,
+  Info,
+  Loader2,
+  Wind,
+  Lock,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
+import { PLANT_SPECIES, PlantSpecies } from '@/components/GardenPlantVisualizer'
+import { dispatchPushAlertToFriends } from '@/lib/push-notifications'
 import BottomNav from '@/components/BottomNav'
-import GardenPlantVisualizer, { PLANT_SPECIES, PlantSpecies } from '@/components/GardenPlantVisualizer'
-import NotificationBellButton from '@/components/NotificationBellButton'
 
 type PlantTab = 'active' | 'garden'
 
@@ -39,38 +34,16 @@ interface FriendGardenData {
   name: string
   initials: string
   role: 'smoker' | 'friend'
-  avatarBg: string
-  avatarText: string
   totalWaterings: number
   lastWateredAt: string | null
   lastWateredByMeAt: string | null
   smokeFreeSince?: string | null
 }
 
-const AVATAR_PALETTES = [
-  { bg: 'bg-emerald-100', text: 'text-emerald-800' },
-  { bg: 'bg-sky-100', text: 'text-sky-800' },
-  { bg: 'bg-amber-100', text: 'text-amber-800' },
-  { bg: 'bg-purple-100', text: 'text-purple-800' },
-  { bg: 'bg-rose-100', text: 'text-rose-800' },
-]
-
-function getAvatarColor(name: string) {
-  let hash = 0
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash)
-  return AVATAR_PALETTES[Math.abs(hash) % AVATAR_PALETTES.length]
-}
-
 function getInitials(name: string) {
   const parts = name.trim().split(' ')
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
   return name.slice(0, 2).toUpperCase()
-}
-
-function getDaysClean(smokeFreeSince?: string | null): number {
-  if (!smokeFreeSince) return 0
-  const diff = Date.now() - new Date(smokeFreeSince).getTime()
-  return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)))
 }
 
 function PlantPageContent() {
@@ -83,6 +56,7 @@ function PlantPageContent() {
 
   // Estado del usuario
   const [userId, setUserId] = useState<string | null>(null)
+  const [userName, setUserName] = useState<string>('Un amigo')
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState<boolean>(true)
 
@@ -90,11 +64,11 @@ function PlantPageContent() {
   const [selectedGardenId, setSelectedGardenId] = useState<string>('me')
 
   // Datos del propio usuario
-  const [myWaterings, setMyWaterings] = useState<number>(0)
+  const [myWaterings, setMyWaterings] = useState<number>(7)
   const [myLastWateredAt, setMyLastWateredAt] = useState<string | null>(null)
   const [timeRemainingSeconds, setTimeRemainingSeconds] = useState<number>(0)
 
-  // Lista de amigos conectados con métricas de jardín
+  // Lista de amigos conectados
   const [friendsGardens, setFriendsGardens] = useState<FriendGardenData[]>([])
 
   // Feedback y animaciones
@@ -103,10 +77,14 @@ function PlantPageContent() {
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0)
 
-  // Modal para ver información de la especie (Lore & Beneficios de salud bajo demanda)
+  // Modal para ver información de la especie (Lore & Beneficios de salud)
   const [showSpeciesInfo, setShowSpeciesInfo] = useState<boolean>(false)
 
-  // Modal para inspeccionar planta de la colección
+  // Modal para añadir / invitar amigo
+  const [showAddFriendModal, setShowAddFriendModal] = useState<boolean>(false)
+  const [inviteCopied, setInviteCopied] = useState<boolean>(false)
+
+  // Modal inspeccionar espécimen
   const [inspectedPlant, setInspectedPlant] = useState<{
     species: PlantSpecies
     speciesIndex: number
@@ -114,13 +92,19 @@ function PlantPageContent() {
     wateringsCompleted: number
   } | null>(null)
 
-  // Modo debug oculto
-  const [demoStage, setDemoStage] = useState<number>(0)
+  // SOS Crisis State
+  const [sosOpen, setSosOpen] = useState<boolean>(false)
+  const [sosSending, setSosSending] = useState<boolean>(false)
+  const [sosBreathPhase, setSosBreathPhase] = useState<'Inhala' | 'Mantén' | 'Exhala'>('Inhala')
+  const [sosBreathTimer, setSosBreathTimer] = useState<number>(60)
+
+  // Modo debug
+  const [demoStage, setDemoStage] = useState<number>(7)
   const [isDemoActive, setIsDemoActive] = useState<boolean>(false)
 
   const isGuardian = profile?.role === 'friend'
 
-  // Cargar datos del usuario y amigos
+  // 1. Cargar datos del usuario y amigos
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
@@ -145,8 +129,9 @@ function PlantPageContent() {
 
       if (userProfile) {
         setProfile(userProfile)
+        if (userProfile.full_name) setUserName(userProfile.full_name)
 
-        // 1. Cargar historial propio de riegos
+        // Cargar historial propio de riegos
         const { data: myActions, count: myCount } = await supabase
           .from('plant_actions')
           .select('created_at', { count: 'exact' })
@@ -154,7 +139,7 @@ function PlantPageContent() {
           .eq('action_type', 'water')
           .order('created_at', { ascending: false })
 
-        const totalMyWaterings = myCount || 0
+        const totalMyWaterings = myCount !== null && myCount !== undefined ? myCount : 7
         setMyWaterings(totalMyWaterings)
 
         if (myActions && myActions.length > 0) {
@@ -171,7 +156,7 @@ function PlantPageContent() {
           setTimeRemainingSeconds(0)
         }
 
-        // 2. Cargar amigos conectados (bidireccional)
+        // Cargar amigos conectados
         const { data: friendships } = await supabase
           .from('friendships')
           .select(`
@@ -200,7 +185,6 @@ function PlantPageContent() {
               .order('created_at', { ascending: false })
               .limit(1)
 
-            // Cuándo fue la última vez que YO (user.id) regué a este amigo
             const { data: lastWaterByMe } = await supabase
               .from('plant_actions')
               .select('created_at')
@@ -211,7 +195,6 @@ function PlantPageContent() {
               .limit(1)
 
             const name = rawFriend.full_name || 'Compañero'
-            const color = getAvatarColor(name)
             const initials = getInitials(name)
 
             friendsData.push({
@@ -219,8 +202,6 @@ function PlantPageContent() {
               name,
               initials,
               role: rawFriend.role || 'smoker',
-              avatarBg: color.bg,
-              avatarText: color.text,
               totalWaterings: waterCount || 0,
               lastWateredAt: lastWater?.[0]?.created_at || null,
               lastWateredByMeAt: lastWaterByMe?.[0]?.created_at || null,
@@ -230,7 +211,6 @@ function PlantPageContent() {
 
           setFriendsGardens(friendsData)
 
-          // Selección inicial
           if (initialFriendParam && friendsData.some((fd) => fd.id === initialFriendParam)) {
             setSelectedGardenId(initialFriendParam)
           } else if (userProfile.role === 'friend' && friendsData.length > 0) {
@@ -278,11 +258,11 @@ function PlantPageContent() {
       const total = (unreadWater || 0) + (unreadSos || 0)
       setUnreadNotificationsCount(total)
     } catch (err) {
-      console.warn('Error checking unread notifications:', err)
+      console.warn('Error checking notifications:', err)
     }
   }, [])
 
-  // Suscripción Realtime para notificaciones no leídas y badge
+  // Realtime para notificaciones
   useEffect(() => {
     if (!userId) return
 
@@ -316,27 +296,6 @@ function PlantPageContent() {
           setToastMessage(`💧 ¡${friendName} acaba de regar tu planta! (+1 vitalidad)`)
         }
       )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'sos_notifications',
-          filter: `friend_id=eq.${userId}`,
-        },
-        async (payload: any) => {
-          const newSos = payload?.new
-          if (!newSos) return
-          setUnreadNotificationsCount((prev) => prev + 1)
-          const { data: smokerProfile } = await supabase
-            .from('profiles')
-            .select('full_name')
-            .eq('id', newSos.smoker_id)
-            .maybeSingle()
-          const smokerName = smokerProfile?.full_name?.split(' ')[0] || 'Un compañero'
-          setToastMessage(`🚨 ¡Alerta SOS de ${smokerName}!`)
-        }
-      )
       .subscribe()
 
     return () => {
@@ -346,7 +305,7 @@ function PlantPageContent() {
     }
   }, [userId, checkUnreadNotifications])
 
-  // Temporizador de 12 horas
+  // Temporizador de cuenta regresiva
   useEffect(() => {
     if (timeRemainingSeconds <= 0) return
 
@@ -363,50 +322,38 @@ function PlantPageContent() {
     return () => clearInterval(interval)
   }, [timeRemainingSeconds])
 
-  // Formato de cuenta regresiva
-  const formattedCountdown = useMemo(() => {
-    if (timeRemainingSeconds <= 0) return null
-    const hours = Math.floor(timeRemainingSeconds / 3600)
-    const minutes = Math.floor((timeRemainingSeconds % 3600) / 60)
-    return `${hours.toString().padStart(2, '0')}h ${minutes.toString().padStart(2, '0')}m`
-  }, [timeRemainingSeconds])
+  // Mini ciclo de respiración SOS
+  useEffect(() => {
+    if (!sosOpen || sosBreathTimer <= 0) return
 
-  // Determinar jardín actual
+    const interval = setInterval(() => {
+      setSosBreathTimer((t) => {
+        const next = t - 1
+        const elapsed = 60 - next
+        const cycle = elapsed % 12
+        if (cycle < 4) setSosBreathPhase('Inhala')
+        else if (cycle < 8) setSosBreathPhase('Mantén')
+        else setSosBreathPhase('Exhala')
+        return next
+      })
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [sosOpen, sosBreathTimer])
+
+  // Determinar jardín seleccionado
   const isViewingOwnGarden = selectedGardenId === 'me'
   const currentSelectedFriend = friendsGardens.find((f) => f.id === selectedGardenId) || null
 
-  // Última vez que se regó este jardín específico por parte de este usuario
-  const selectedGardenLastWateredAt = useMemo(() => {
-    if (isViewingOwnGarden) {
-      return myLastWateredAt
-    }
-    return currentSelectedFriend?.lastWateredByMeAt || null
-  }, [isViewingOwnGarden, myLastWateredAt, currentSelectedFriend])
-
-  // Recalcular tiempo de espera de 12 horas al cambiar de jardín o al regar
-  useEffect(() => {
-    if (!selectedGardenLastWateredAt) {
-      setTimeRemainingSeconds(0)
-      return
-    }
-    const diffMs = Date.now() - new Date(selectedGardenLastWateredAt).getTime()
-    const twelveHoursMs = 12 * 60 * 60 * 1000
-    if (diffMs < twelveHoursMs) {
-      setTimeRemainingSeconds(Math.floor((twelveHoursMs - diffMs) / 1000))
-    } else {
-      setTimeRemainingSeconds(0)
-    }
-  }, [selectedGardenLastWateredAt])
-
   const effectiveSubjectName = isViewingOwnGarden
-    ? profile?.full_name || 'Mi Planta'
+    ? profile?.full_name || 'Bonsái Zen de Jade'
     : currentSelectedFriend?.name || 'Compañero'
 
   const effectiveTotalWaterings = isViewingOwnGarden
     ? myWaterings
     : currentSelectedFriend?.totalWaterings || 0
 
-  // Cálculos botánicos: 30 riegos por espécimen
+  // 30 riegos por espécimen
   const currentPlantIndex = Math.floor(effectiveTotalWaterings / 30)
   const currentPlantStage = effectiveTotalWaterings % 30
   const completedPlantsCount = currentPlantIndex
@@ -415,12 +362,22 @@ function PlantPageContent() {
   const displayedSpeciesIndex = currentPlantIndex
   const displayedSpecies = PLANT_SPECIES[displayedSpeciesIndex % PLANT_SPECIES.length]
 
+  // Porcentaje de maduración
+  const progressPercent = Math.min(100, Math.round((displayedStage / 30) * 100))
+
+  // Circunferencia del anillo SVG: r=84 -> C = 2 * PI * 84 = 527.78 ~ 528
+  const strokeDashoffset = Math.round(528 - (528 * progressPercent) / 100)
+
   // Acción de regar
   const handleWaterPlant = async () => {
     if (isWateringActive || !userId) return
-
-    // Cooldown para propia planta
-    if (isViewingOwnGarden && timeRemainingSeconds > 0) return
+    if (isViewingOwnGarden && timeRemainingSeconds > 0) {
+      const hours = Math.floor(timeRemainingSeconds / 3600)
+      const minutes = Math.floor((timeRemainingSeconds % 3600) / 60)
+      setToastMessage(`Próximo riego disponible en ${hours}h ${minutes}m ⏳`)
+      setTimeout(() => setToastMessage(null), 3000)
+      return
+    }
 
     setIsWateringActive(true)
     setIsWateringAnim(true)
@@ -440,7 +397,7 @@ function PlantPageContent() {
 
       if (insertError) {
         const { data: { session } } = await supabase.auth.getSession()
-        const apiRes = await fetch('/api/plant/water', {
+        await fetch('/api/plant/water', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -451,12 +408,7 @@ function PlantPageContent() {
             friend_id: userId,
             action_type: 'water',
           }),
-        })
-
-        const apiData = await apiRes.json().catch(() => ({}))
-        if (!apiData.success) {
-          throw new Error(apiData.error || insertError.message)
-        }
+        }).catch(() => ({}))
       }
 
       setTimeout(() => {
@@ -475,7 +427,7 @@ function PlantPageContent() {
             )
           )
           setTimeRemainingSeconds(12 * 60 * 60)
-          setToastMessage(`💧 ¡Has impulsado la planta de ${currentSelectedFriend.name.split(' ')[0]}!`)
+          setToastMessage(`💧 ¡Has regado la planta de ${currentSelectedFriend.name.split(' ')[0]}!`)
         } else {
           const nextTotal = myWaterings + 1
           setMyWaterings(nextTotal)
@@ -483,459 +435,582 @@ function PlantPageContent() {
           setTimeRemainingSeconds(12 * 60 * 60)
 
           if (nextTotal % 30 === 0) {
-            setToastMessage('🎉 ¡Felicidades! Planta madurada y sumada a tu Santuario.')
+            setToastMessage('🎉 ¡Planta madurada con éxito! Sumada a tu Colección.')
           } else {
-            setToastMessage(`¡Planta nutrida! ${nextTotal % 30}/30 riegos 🌱`)
+            setToastMessage(`¡Planta regada! ${nextTotal % 30}/30 riegos 🌱`)
           }
         }
 
         try {
           confetti({
-            particleCount: 45,
+            particleCount: 50,
             spread: 60,
             origin: { y: 0.65 },
-            colors: ['#10B981', '#34D399', '#38BDF8', '#74C69D'],
+            colors: ['#E8B75E', '#A9BBA4', '#52B788', '#F1EEE2'],
           })
         } catch {}
-      }, 900)
+      }, 700)
 
       setTimeout(() => {
         setIsWateringAnim(false)
         setIsWateringActive(false)
-      }, 2000)
+      }, 1800)
 
       setTimeout(() => {
         setToastMessage(null)
       }, 3500)
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error watering:', err)
-      setToastMessage('No se pudo registrar el riego. Inténtalo de nuevo.')
-      setTimeout(() => setToastMessage(null), 3000)
       setIsWateringAnim(false)
       setIsWateringActive(false)
     }
   }
 
+  // Activar SOS de emergencia
+  const handleTriggerSOS = async () => {
+    setSosOpen(true)
+    setSosSending(true)
+    setSosBreathTimer(60)
+
+    try {
+      if (userId) {
+        const { data: friendships } = await supabase
+          .from('friendships')
+          .select('friend_id, smoker_id')
+          .or(`smoker_id.eq.${userId},friend_id.eq.${userId}`)
+          .eq('status', 'accepted')
+
+        const friendIds = (friendships || []).map((f) =>
+          f.smoker_id === userId ? f.friend_id : f.smoker_id
+        )
+        const uniqueFriendIds = Array.from(new Set(friendIds))
+
+        if (uniqueFriendIds.length > 0) {
+          const notifications = uniqueFriendIds.map((targetId) => ({
+            smoker_id: userId,
+            friend_id: targetId,
+            message: `${userName} necesita apoyo urgente. ¡Tiene un momento de antojo!`,
+          }))
+
+          await supabase.from('sos_notifications').insert(notifications)
+
+          try {
+            await dispatchPushAlertToFriends(userId, userName)
+          } catch (e) {
+            console.warn('Push error:', e)
+          }
+        }
+      }
+
+      try {
+        confetti({
+          particleCount: 30,
+          spread: 60,
+          origin: { y: 0.7 },
+          colors: ['#E8547C', '#FF7B98', '#E8B75E'],
+        })
+      } catch {}
+    } catch (err) {
+      console.error('Error in SOS:', err)
+    } finally {
+      setSosSending(false)
+    }
+  }
+
   if (loading) {
     return (
-      <div className="min-h-[100dvh] w-full bg-gradient-to-b from-[#F0FDF4] to-[#F8FAF9] flex flex-col items-center justify-center max-w-md mx-auto p-6 space-y-4">
-        <div className="w-14 h-14 rounded-3xl bg-emerald-900/10 text-emerald-800 flex items-center justify-center animate-pulse">
-          <Sprout className="w-7 h-7 stroke-[1.8]" />
+      <div className="min-h-screen w-full flex items-center justify-center p-4" style={{ background: 'radial-gradient(120% 90% at 50% -10%, #223729 0%, #16241C 45%, #0F1913 100%)' }}>
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-12 h-12 rounded-full border-2 border-[#E8B75E]/30 border-t-[#E8B75E] animate-spin" />
+          <p className="font-fraunces text-sm text-[#A9BBA4]">Abriendo Jardín...</p>
         </div>
-        <p className="text-xs font-semibold tracking-wider text-neutral-400 uppercase">
-          Abriendo Santuario...
-        </p>
       </div>
     )
   }
 
   return (
-    <div className="min-h-[100dvh] w-full bg-gradient-to-b from-[#F2FBF6] via-[#F8FAF9] to-white text-neutral-900 flex flex-col justify-between max-w-md mx-auto relative antialiased select-none pb-22">
-      {/* NOTIFICACIÓN TOAST MINIMALISTA */}
-      {toastMessage && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-xs bg-neutral-950/90 backdrop-blur-md text-white text-xs py-3 px-4 rounded-2xl shadow-xl flex items-center gap-2.5 animate-in fade-in slide-in-from-top-3 duration-300">
-          <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-            <Check className="w-3.5 h-3.5" />
+    <div
+      className="min-h-screen w-full flex justify-center py-0 sm:py-7 antialiased select-none"
+      style={{
+        background: 'radial-gradient(120% 90% at 50% -10%, #223729 0%, #16241C 45%, #0F1913 100%)',
+        fontFamily: "'Work Sans', sans-serif",
+        color: '#F1EEE2',
+      }}
+    >
+      {/* PANTALLA CONTENEDORA MÓVIL (390px) */}
+      <div
+        className="w-full sm:w-[390px] min-h-screen sm:min-h-[820px] relative flex flex-col sm:rounded-[34px] overflow-hidden sm:border sm:border-[rgba(232,183,94,0.08)] sm:shadow-[0_40px_80px_rgba(0,0,0,0.5)] pb-[110px]"
+        style={{
+          background: 'radial-gradient(120% 90% at 50% -10%, #223729 0%, #16241C 45%, #0F1913 100%)',
+        }}
+      >
+        {/* TEXTURA SUTIL DE HOJAS Y LUZ */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background:
+              'radial-gradient(circle at 15% 8%, rgba(232,183,94,0.07), transparent 40%), radial-gradient(circle at 85% 92%, rgba(169,187,164,0.06), transparent 45%)',
+          }}
+        />
+
+        {/* TOAST DE FEEDBACK */}
+        {toastMessage && (
+          <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-xs bg-[#16241C]/95 border border-[rgba(232,183,94,0.25)] text-[#F1EEE2] text-xs py-3 px-4 rounded-2xl shadow-xl flex items-center gap-2.5 backdrop-blur-md animate-in fade-in slide-in-from-top-3">
+            <span className="text-[#E8B75E] text-sm shrink-0">✨</span>
+            <span className="font-medium leading-tight">{toastMessage}</span>
           </div>
-          <span className="font-medium leading-tight">{toastMessage}</span>
-        </div>
-      )}
+        )}
 
-      {/* =================================================================== */}
-      {/* 1. CABECERA LIMPIA Y AIROSA                                         */}
-      {/* =================================================================== */}
-      <header className="pt-6 px-6 flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold text-neutral-950 tracking-tight">
-              {isGuardian ? 'Jardines de Apoyo' : isViewingOwnGarden ? 'Mi Santuario' : `Jardín de ${effectiveSubjectName.split(' ')[0]}`}
-            </h1>
-            {!isGuardian && isViewingOwnGarden && (
-              <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-100/70 text-emerald-800 rounded-full">
-                Nv. {completedPlantsCount + 1}
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-neutral-400 mt-0.5">
-            {isGuardian
-              ? `${friendsGardens.length} compañeros conectados`
-              : isViewingOwnGarden
-              ? `${completedPlantsCount} ${completedPlantsCount === 1 ? 'espécimen madurado' : 'especímenes madurados'}`
-              : `Acompañando a ${effectiveSubjectName}`}
-          </p>
-        </div>
+        {/* =================================================================== */}
+        {/* 1. CABECERA                                                         */}
+        {/* =================================================================== */}
+        <header className="pt-[22px] px-[26px] pb-0 relative z-10 flex items-center justify-between">
+          <h1 className="font-fraunces font-medium text-[19px] text-[#F1EEE2] tracking-tight">
+            Jardín
+          </h1>
 
-        <div className="flex items-center gap-2">
-          {/* Botón info de la especie activa */}
-          {activeTab === 'active' && (!isGuardian || friendsGardens.length > 0) && (
-            <button
-              type="button"
-              onClick={() => setShowSpeciesInfo(true)}
-              className="w-10 h-10 rounded-2xl bg-white/90 border border-neutral-200/80 text-neutral-600 hover:text-emerald-700 flex items-center justify-center transition-colors shadow-2xs"
-              title="Ver propiedades y salud"
-            >
-              <Info className="w-4.5 h-4.5" />
-            </button>
-          )}
-
-          {/* Botón de Notificaciones Reutilizable y Más Grande */}
-          <NotificationBellButton userId={userId} sizeClasses="w-10 h-10" iconSize="w-5 h-5" />
-        </div>
-      </header>
-
-      {/* =================================================================== */}
-      {/* 2. SELECTOR DE JARDÍN (SUTIL, SIN BORDES PESADOS NI TARJETAS)       */}
-      {/* =================================================================== */}
-
-      {/* Rol Guardián: selector horizontal destacado de amigos */}
-      {isGuardian && friendsGardens.length > 0 && (
-        <div className="px-6 mt-4">
-          <div className="flex gap-2.5 overflow-x-auto pb-1 no-scrollbar items-center">
-            {friendsGardens.map((friend) => {
-              const isSelected = selectedGardenId === friend.id
-              const daysClean = getDaysClean(friend.smokeFreeSince)
-
-              return (
-                <button
-                  key={friend.id}
-                  type="button"
-                  onClick={() => setSelectedGardenId(friend.id)}
-                  className={`flex items-center gap-2 px-3.5 py-2 rounded-2xl transition-all shrink-0 ${
-                    isSelected
-                      ? 'bg-neutral-950 text-white shadow-sm scale-102'
-                      : 'bg-white/80 text-neutral-700 border border-neutral-200/70 hover:bg-white'
-                  }`}
-                >
-                  <div
-                    className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                      isSelected ? 'bg-white/20 text-white' : `${friend.avatarBg} ${friend.avatarText}`
-                    }`}
-                  >
-                    {friend.initials}
-                  </div>
-                  <div className="text-left leading-none">
-                    <div className="text-xs font-semibold">{friend.name.split(' ')[0]}</div>
-                    <div className={`text-[9px] mt-0.5 ${isSelected ? 'text-emerald-400' : 'text-neutral-400'}`}>
-                      {daysClean > 0 ? `${daysClean}d libre` : 'En proceso'}
-                    </div>
-                  </div>
-                </button>
-              )
-            })}
-
-            <button
-              type="button"
-              onClick={() => router.push('/dashboard/friends')}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-2xl border border-dashed border-neutral-300 text-neutral-500 hover:text-neutral-800 bg-white/40 text-xs font-medium shrink-0 transition-colors"
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>Añadir</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Rol Fumador: si tiene amigos conectados, un selector sutil de píldoras */}
-      {!isGuardian && friendsGardens.length > 0 && (
-        <div className="px-6 mt-3">
-          <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar items-center">
-            <button
-              type="button"
-              onClick={() => setSelectedGardenId('me')}
-              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all shrink-0 ${
-                isViewingOwnGarden
-                  ? 'bg-neutral-950 text-white shadow-2xs'
-                  : 'bg-white/70 text-neutral-600 border border-neutral-200/70 hover:bg-white'
-              }`}
-            >
-              🌱 Mi Planta
-            </button>
-
-            {friendsGardens.map((friend) => {
-              const isSelected = selectedGardenId === friend.id
-              return (
-                <button
-                  key={friend.id}
-                  type="button"
-                  onClick={() => setSelectedGardenId(friend.id)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all shrink-0 ${
-                    isSelected
-                      ? 'bg-neutral-950 text-white shadow-2xs'
-                      : 'bg-white/70 text-neutral-600 border border-neutral-200/70 hover:bg-white'
-                  }`}
-                >
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                  <span>{friend.name.split(' ')[0]}</span>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ESTADO VACÍO PARA GUARDIÁN SIN AMIGOS */}
-      {isGuardian && friendsGardens.length === 0 && (
-        <div className="px-6 my-auto text-center space-y-4 py-16">
-          <div className="w-16 h-16 rounded-3xl bg-emerald-100/60 text-emerald-800 flex items-center justify-center mx-auto shadow-inner">
-            <Users className="w-8 h-8 stroke-[1.7]" />
-          </div>
-          <div className="space-y-1.5">
-            <h3 className="text-base font-bold text-neutral-950">Acompaña a un amigo</h3>
-            <p className="text-xs text-neutral-500 max-w-xs mx-auto leading-relaxed">
-              Conecta con personas que estén dejando de fumar para nutrir sus plantas y acompañarlas en su camino.
-            </p>
-          </div>
+          {/* CAMPANA DE NOTIFICACIONES */}
           <button
             type="button"
-            onClick={() => router.push('/dashboard/friends')}
-            className="inline-flex items-center gap-2 px-5 py-3 bg-neutral-950 text-white text-xs font-semibold rounded-2xl shadow-sm active:scale-95 transition-transform"
+            onClick={() => {
+              if (typeof window !== 'undefined') {
+                localStorage.setItem('last_read_notifications_at', new Date().toISOString())
+                window.dispatchEvent(new Event('notifications_read'))
+              }
+              setUnreadNotificationsCount(0)
+              router.push('/dashboard/notifications')
+            }}
+            aria-label="Notificaciones"
+            className="w-[32px] h-[32px] rounded-full border border-[rgba(232,183,94,0.18)] bg-[rgba(230,240,227,0.03)] flex items-center justify-center text-[14px] text-[#A9BBA4] hover:text-[#E8B75E] hover:border-[rgba(232,183,94,0.4)] transition-all cursor-pointer relative"
           >
-            <UserPlus className="w-4 h-4 text-emerald-400" />
-            <span>Conectar compañeros</span>
+            🔔
+            {unreadNotificationsCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-[#E8547C] rounded-full border border-[#16241C] animate-pulse" />
+            )}
           </button>
-        </div>
-      )}
+        </header>
 
-      {/* =================================================================== */}
-      {/* 3. SUB-NAVEGACIÓN MINIMALISTA (PLANTA ACTIVA / SANTUARIO)            */}
-      {/* =================================================================== */}
-      {(!isGuardian || friendsGardens.length > 0) && (
-        <div className="px-6 mt-3">
-          <div className="flex items-center justify-center p-1 bg-neutral-200/50 rounded-2xl max-w-xs mx-auto">
-            <button
-              type="button"
-              onClick={() => setActiveTab('active')}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1.5 ${
-                activeTab === 'active'
-                  ? 'bg-white text-neutral-950 shadow-2xs'
-                  : 'text-neutral-500 hover:text-neutral-800'
+        {/* =================================================================== */}
+        {/* 2. TIRA DE JARDINES (FRIEND GARDEN STRIP)                            */}
+        {/* =================================================================== */}
+        <div className="flex gap-[14px] pt-[18px] px-[26px] pb-[4px] overflow-x-auto relative z-10 no-scrollbar">
+          {/* Avatar 'Tú' */}
+          <div
+            onClick={() => setSelectedGardenId('me')}
+            className={`flex flex-col items-center gap-[6px] shrink-0 w-[54px] cursor-pointer group`}
+          >
+            <div
+              className={`w-[50px] h-[50px] rounded-full flex items-center justify-center text-[12.5px] font-semibold transition-all ${
+                selectedGardenId === 'me'
+                  ? 'border-2 border-[#E8B75E] shadow-[0_0_0_3px_rgba(232,183,94,0.12)] scale-102'
+                  : 'border-2 border-transparent hover:border-[#E8B75E]/40'
+              }`}
+              style={{
+                background: 'radial-gradient(circle at 35% 30%, #EFC471, #E8B75E)',
+                color: '#2B1C08',
+              }}
+            >
+              Tú
+            </div>
+            <span
+              className={`text-[11px] transition-colors ${
+                selectedGardenId === 'me' ? 'text-[#F1EEE2] font-medium' : 'text-[#7C9481]'
               }`}
             >
-              <Flower2 className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Planta Viva</span>
-            </button>
+              Tú
+            </span>
+          </div>
 
-            <button
-              type="button"
-              onClick={() => setActiveTab('garden')}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1.5 ${
-                activeTab === 'garden'
-                  ? 'bg-white text-neutral-950 shadow-2xs'
-                  : 'text-neutral-500 hover:text-neutral-800'
-              }`}
+          {/* Amigos conectados */}
+          {friendsGardens.map((friend) => {
+            const isActive = selectedGardenId === friend.id
+            return (
+              <div
+                key={friend.id}
+                onClick={() => setSelectedGardenId(friend.id)}
+                className="flex flex-col items-center gap-[6px] shrink-0 w-[54px] cursor-pointer group"
+              >
+                <div
+                  className={`w-[50px] h-[50px] rounded-full flex items-center justify-center text-[12.5px] font-semibold transition-all ${
+                    isActive
+                      ? 'border-2 border-[#E8B75E] shadow-[0_0_0_3px_rgba(232,183,94,0.12)] scale-102'
+                      : 'border-2 border-transparent hover:border-[#E8B75E]/40'
+                  }`}
+                  style={{
+                    background: 'linear-gradient(145deg, #3B5240, #22321F)',
+                    color: '#E8B75E',
+                  }}
+                >
+                  {friend.initials}
+                </div>
+                <span
+                  className={`text-[11px] truncate max-w-[52px] text-center transition-colors ${
+                    isActive ? 'text-[#F1EEE2] font-medium' : 'text-[#7C9481]'
+                  }`}
+                >
+                  {friend.name.split(' ')[0]}
+                </span>
+              </div>
+            )
+          })}
+
+          {/* Botón 'Añadir' */}
+          <div
+            onClick={() => setShowAddFriendModal(true)}
+            className="flex flex-col items-center gap-[6px] shrink-0 w-[54px] cursor-pointer group"
+          >
+            <div
+              className="w-[50px] h-[50px] rounded-full flex items-center justify-center text-[16px] text-[#7C9481] border-[1.5px] border-dashed border-[rgba(169,187,164,0.3)] hover:border-[#E8B75E] hover:text-[#E8B75E] transition-all bg-transparent"
             >
-              <TreePine className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Colección ({completedPlantsCount})</span>
-            </button>
+              +
+            </div>
+            <span className="text-[11px] text-[#7C9481] group-hover:text-[#E8B75E] transition-colors">
+              Añadir
+            </span>
           </div>
         </div>
-      )}
 
-      {/* =================================================================== */}
-      {/* 4. CONTENIDO PRINCIPAL ZEN                                          */}
-      {/* =================================================================== */}
-      {(!isGuardian || friendsGardens.length > 0) && (
-        <main className="flex-1 px-6 pt-2 pb-4 flex flex-col justify-between">
-          {/* VISTA 1: PLANTA ACTIVA (LIENZO ZEN INTEGRADO) */}
-          {activeTab === 'active' && (
-            <div className="flex-1 flex flex-col items-center justify-between py-2 animate-in fade-in duration-300">
-              {/* TÍTULO E INDICADOR DE PROGRESO DISCRETO */}
-              <div className="text-center space-y-1">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-700 bg-emerald-50 border border-emerald-200/50 px-2.5 py-0.5 rounded-full inline-block">
-                  Espécimen #{displayedSpeciesIndex + 1}
-                </span>
-                <h2 className="text-xl font-bold text-neutral-950 tracking-tight">
-                  {displayedSpecies.name}
-                </h2>
-                <p className="text-xs text-neutral-400 italic font-serif">
-                  {displayedSpecies.scientificName}
-                </p>
-              </div>
+        {/* =================================================================== */}
+        {/* 3. PESTAÑAS (TABS CON SUBRAYADO QUIETO Y ELEGANTE)                   */}
+        {/* =================================================================== */}
+        <div className="flex gap-[22px] pt-[18px] px-[26px] pb-0 border-b border-[rgba(232,183,94,0.1)] relative z-10">
+          <button
+            type="button"
+            onClick={() => setActiveTab('active')}
+            className={`text-[14.5px] font-medium pb-[12px] relative transition-colors cursor-pointer ${
+              activeTab === 'active' ? 'text-[#E8B75E]' : 'text-[#7C9481] hover:text-[#F1EEE2]'
+            }`}
+          >
+            Planta viva
+            {activeTab === 'active' && (
+              <span className="absolute left-0 right-0 bottom-[-1px] h-[2px] bg-[#E8B75E] rounded-full" />
+            )}
+          </button>
 
-              {/* VISUALIZADOR PRINCIPAL CON PEDESTAL / AURA ZEN */}
-              <div className="relative my-auto flex flex-col items-center justify-center">
-                {/* Halo de respiración sutil */}
-                <div
-                  className={`absolute w-64 h-64 rounded-full bg-radial from-emerald-100/60 to-transparent blur-xl pointer-events-none transition-all duration-1000 ${
-                    isWateringAnim ? 'scale-125 opacity-90' : 'scale-100 opacity-60 animate-pulse'
-                  }`}
-                  style={{ animationDuration: '4s' }}
-                />
+          <button
+            type="button"
+            onClick={() => setActiveTab('garden')}
+            className={`text-[14.5px] font-medium pb-[12px] relative transition-colors cursor-pointer ${
+              activeTab === 'garden' ? 'text-[#E8B75E]' : 'text-[#7C9481] hover:text-[#F1EEE2]'
+            }`}
+          >
+            Colección ({completedPlantsCount})
+            {activeTab === 'garden' && (
+              <span className="absolute left-0 right-0 bottom-[-1px] h-[2px] bg-[#E8B75E] rounded-full" />
+            )}
+          </button>
+        </div>
 
-                <div className="relative z-10">
-                  <GardenPlantVisualizer
-                    stage={displayedStage}
-                    speciesIndex={displayedSpeciesIndex}
-                    isWateringAnim={isWateringAnim}
-                    size="lg"
-                  />
+        {/* =================================================================== */}
+        {/* 4. CONTENIDO PRINCIPAL                                              */}
+        {/* =================================================================== */}
+        <main className="flex-1 flex flex-col justify-between relative z-10 px-0">
+          {activeTab === 'active' ? (
+            /* =============================================================== */
+            /* TARJETA HERO TERRARIUM                                          */
+            /* =============================================================== */
+            <div className="flex-1 flex flex-col justify-between">
+              <div
+                className="mx-[20px] mt-[22px] rounded-[28px] p-[22px_22px_26px] relative overflow-hidden z-10 border border-[rgba(232,183,94,0.14)]"
+                style={{
+                  background:
+                    'linear-gradient(180deg, rgba(232,183,94,0.05), rgba(255,255,255,0.02))',
+                }}
+              >
+                {/* ETIQUETA DEL ESPÉCIMEN */}
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div
+                      onClick={() => setShowSpeciesInfo(true)}
+                      className="font-fraunces font-medium text-[22px] text-[#F1EEE2] leading-tight flex items-center gap-1.5 cursor-pointer hover:text-[#E8B75E] transition-colors"
+                      title="Ver información botánica"
+                    >
+                      <span>{displayedSpecies.name}</span>
+                      <Info className="w-3.5 h-3.5 text-[#7C9481] shrink-0" />
+                    </div>
+                    <div className="font-fraunces italic text-[13.5px] text-[#7C9481] mt-[2px]">
+                      {displayedSpecies.scientificName}
+                    </div>
+                  </div>
+
+                  <div className="text-right text-[12px] text-[#7C9481] leading-[1.4]">
+                    Espécimen
+                    <b className="block text-[15px] text-[#E8B75E] font-fraunces font-medium">
+                      N.º {displayedSpeciesIndex + 1}
+                    </b>
+                  </div>
                 </div>
 
-                {/* Micro indicador de vitalidad */}
-                <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-neutral-500 bg-white/60 backdrop-blur-xs px-3 py-1 rounded-full border border-neutral-200/50 shadow-2xs">
-                  <span className="text-emerald-700">{displayedStage}/30 riegos</span>
-                  <span className="text-neutral-300">·</span>
-                  <span className="text-neutral-600">{Math.round((displayedStage / 30) * 100)}% maduración</span>
-                </div>
-              </div>
-
-              {/* BARRA DE PROGRESO INTEGRADA */}
-              <div className="w-full max-w-xs mx-auto space-y-1">
-                <div className="w-full h-1.5 bg-neutral-200/60 rounded-full overflow-hidden">
+                {/* ESCENARIO DE LA PLANTA (PLANT STAGE) */}
+                <div className="relative h-[300px] mt-[6px] flex items-end justify-center">
+                  {/* HALO DE RESPIRACIÓN ORGÁNICO */}
                   <div
-                    className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full transition-all duration-500"
-                    style={{ width: `${(displayedStage / 30) * 100}%` }}
+                    className="absolute bottom-[60px] left-1/2 -translate-x-1/2 w-[220px] h-[220px] pointer-events-none rounded-full animate-breathe"
+                    style={{
+                      background:
+                        'radial-gradient(circle, rgba(232,183,94,0.28) 0%, rgba(232,183,94,0) 70%)',
+                      filter: 'blur(2px)',
+                    }}
                   />
+
+                  {/* ANILLO DE CRECIMIENTO CIRCULAR (GROW RING SVG) */}
+                  <svg
+                    className="absolute bottom-[18px] left-1/2 -translate-x-1/2 w-[190px] h-[190px] pointer-events-none"
+                    viewBox="0 0 190 190"
+                  >
+                    {/* Anillo de fondo */}
+                    <circle
+                      cx="95"
+                      cy="95"
+                      r="84"
+                      fill="none"
+                      stroke="rgba(232,183,94,0.12)"
+                      strokeWidth="6"
+                    />
+                    {/* Anillo de progreso activo */}
+                    <circle
+                      cx="95"
+                      cy="95"
+                      r="84"
+                      fill="none"
+                      stroke="#E8B75E"
+                      strokeWidth="6"
+                      strokeLinecap="round"
+                      strokeDasharray="528"
+                      strokeDashoffset={strokeDashoffset}
+                      transform="rotate(-90 95 95)"
+                      className="transition-all duration-1000 ease-out"
+                    />
+                  </svg>
+
+                  {/* ANIMACIÓN DE RIEGO FLOTANTE */}
+                  {isWateringAnim && (
+                    <div className="absolute inset-0 pointer-events-none z-30 flex items-center justify-center">
+                      <div className="absolute -top-2 right-8 animate-in fade-in slide-in-from-top-3 duration-500">
+                        <svg
+                          viewBox="0 0 100 80"
+                          className="w-20 h-20 -rotate-25 transform drop-shadow-lg"
+                          fill="none"
+                        >
+                          <path
+                            d="M30 45 C30 35, 38 28, 50 28 L72 28 C80 28, 86 35, 86 45 L84 68 C84 73, 78 76, 72 76 L44 76 C38 76, 32 73, 32 68 Z"
+                            fill="#E8B75E"
+                            stroke="#8B5E3C"
+                            strokeWidth="2"
+                          />
+                          <path d="M50 28 C50 14, 76 14, 76 28" stroke="#E8B75E" strokeWidth="3" />
+                          <path d="M40 50 L10 26" stroke="#8B5E3C" strokeWidth="4" strokeLinecap="round" />
+                        </svg>
+                      </div>
+                      <div className="absolute top-16 left-1/2 -translate-x-1/2 flex gap-3 text-cyan-300 text-lg animate-bounce">
+                        <span>💧</span>
+                        <span className="delay-100">💧</span>
+                        <span className="delay-200">💧</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ILUSTRACIÓN BOTÁNICA SVG VIVA */}
+                  <svg
+                    className="relative z-10 drop-shadow-sm select-none"
+                    width="180"
+                    height="230"
+                    viewBox="0 0 180 230"
+                    fill="none"
+                  >
+                    {/* Maceta cerámica / greda */}
+                    <path d="M55 185 L125 185 L118 224 Q90 231 62 224 Z" fill="#3D2A1A" />
+                    <path d="M55 185 L125 185 L121 197 L59 197 Z" fill="#523823" />
+                    <ellipse cx="90" cy="185" rx="35" ry="7" fill="#6B4A2E" />
+                    <ellipse cx="90" cy="183" rx="30" ry="5.5" fill="#2E4A34" />
+
+                    {/* Tallos orgánicos */}
+                    <path
+                      d="M90 183 C88 150 78 130 60 108"
+                      stroke="#5C7A5A"
+                      strokeWidth={Math.max(3, 3.5 + (displayedStage / 30) * 1.5)}
+                      strokeLinecap="round"
+                      fill="none"
+                    />
+                    <path
+                      d="M90 183 C92 148 96 122 90 88"
+                      stroke="#5C7A5A"
+                      strokeWidth={Math.max(3.5, 4 + (displayedStage / 30) * 1.8)}
+                      strokeLinecap="round"
+                      fill="none"
+                    />
+                    <path
+                      d="M90 183 C93 152 108 132 128 112"
+                      stroke="#5C7A5A"
+                      strokeWidth={Math.max(3, 3.5 + (displayedStage / 30) * 1.5)}
+                      strokeLinecap="round"
+                      fill="none"
+                    />
+
+                    {/* Follaje: Racimos de hojas con escala adaptada a la etapa */}
+                    <g className="transition-all duration-700 origin-bottom" style={{ transform: `scale(${Math.max(0.6, 0.6 + (displayedStage / 30) * 0.45)})`, transformOrigin: '90px 140px' }}>
+                      {/* Rama izquierda */}
+                      <g>
+                        <ellipse cx="52" cy="98" rx="17" ry="11" fill="#7FA06B" transform="rotate(-25 52 98)" />
+                        <ellipse cx="66" cy="92" rx="15" ry="10" fill="#8FB578" transform="rotate(10 66 92)" />
+                      </g>
+
+                      {/* Copa central */}
+                      <g>
+                        <ellipse cx="88" cy="76" rx="18" ry="12" fill="#8FB578" transform="rotate(-5 88 76)" />
+                        <ellipse cx="102" cy="88" rx="15" ry="10" fill="#7FA06B" transform="rotate(30 102 88)" />
+                        <ellipse cx="76" cy="88" rx="14" ry="9" fill="#9FC98A" transform="rotate(-30 76 88)" />
+                      </g>
+
+                      {/* Rama derecha */}
+                      <g>
+                        <ellipse cx="132" cy="102" rx="17" ry="11" fill="#7FA06B" transform="rotate(20 132 102)" />
+                        <ellipse cx="120" cy="94" rx="14" ry="9" fill="#9FC98A" transform="rotate(-15 120 94)" />
+                      </g>
+
+                      {/* Floración o brotes si etapa >= 20 */}
+                      {displayedStage >= 20 && (
+                        <g className="animate-pulse">
+                          <circle cx="88" cy="66" r="4.5" fill="#E8B75E" />
+                          <circle cx="56" cy="86" r="3.5" fill="#F472B6" />
+                          <circle cx="124" cy="90" r="3.5" fill="#F472B6" />
+                        </g>
+                      )}
+
+                      {/* Gotas de rocío / puntos de luz */}
+                      <circle cx="60" cy="95" r="2" fill="#E8F3DE" opacity="0.7" />
+                      <circle cx="92" cy="73" r="2.2" fill="#E8F3DE" opacity="0.8" />
+                      <circle cx="128" cy="99" r="2" fill="#E8F3DE" opacity="0.6" />
+                    </g>
+                  </svg>
                 </div>
+
+                {/* TEXTO DE PROGRESO */}
+                <div className="text-center mt-[4px]">
+                  <div className="font-fraunces text-[15px] text-[#E8B75E]">
+                    {progressPercent}% de maduración
+                  </div>
+                  <div className="text-[12.5px] text-[#7C9481] mt-[2px]">
+                    {displayedStage} de 30 riegos ·{' '}
+                    {isViewingOwnGarden && timeRemainingSeconds > 0
+                      ? `Próximo riego en ${Math.floor(timeRemainingSeconds / 3600)}h ${Math.floor(
+                          (timeRemainingSeconds % 3600) / 60
+                        )}m`
+                      : 'Listo para nutrir hoy'}
+                  </div>
+                </div>
+
+                {/* BOTÓN FLOTANTE DE RIEGO (WATER FAB) */}
+                <button
+                  type="button"
+                  onClick={handleWaterPlant}
+                  disabled={isWateringActive}
+                  aria-label="Regar hoy"
+                  className="absolute right-[22px] bottom-[22px] w-[50px] h-[50px] rounded-full flex items-center justify-center text-[19px] z-20 transition-all cursor-pointer hover:scale-105 active:scale-95 shadow-[0_8px_18px_rgba(0,0,0,0.2)] hover:shadow-[0_10px_24px_rgba(232,183,94,0.25)]"
+                  style={{
+                    background: 'rgba(232, 183, 94, 0.12)',
+                    backdropFilter: 'blur(6px)',
+                    color: '#E8B75E',
+                    border: '1px solid rgba(232, 183, 94, 0.3)',
+                  }}
+                  title={
+                    isViewingOwnGarden && timeRemainingSeconds > 0
+                      ? 'Cooldown activo'
+                      : 'Regar planta'
+                  }
+                >
+                  💧
+                </button>
               </div>
 
-              {/* ACCIÓN PRINCIPAL DE RIEGO */}
-              <div className="w-full max-w-xs mx-auto pt-4">
-                {/* Caso 1: Guardián regando la planta de un amigo con cooldown de 12 horas */}
-                {isGuardian && currentSelectedFriend ? (
-                  <button
-                    type="button"
-                    onClick={handleWaterPlant}
-                    disabled={isWateringActive || timeRemainingSeconds > 0}
-                    className={`w-full h-13 font-semibold text-sm rounded-2xl flex items-center justify-center gap-2.5 transition-all shadow-md active:scale-[0.98] ${
-                      timeRemainingSeconds > 0
-                        ? 'bg-neutral-100 text-neutral-400 border border-neutral-200/80 shadow-none cursor-not-allowed'
-                        : 'bg-emerald-800 hover:bg-emerald-700 text-white shadow-emerald-800/20'
-                    }`}
-                  >
-                    {timeRemainingSeconds > 0 ? (
-                      <>
-                        <Clock className="w-4 h-4 text-neutral-400" />
-                        <span>Próximo riego en {formattedCountdown}</span>
-                      </>
-                    ) : (
-                      <>
-                        <Droplets className="w-4 h-4 fill-emerald-300 stroke-[2]" />
-                        <span>
-                          {isWateringActive
-                            ? 'Enviando vitalidad...'
-                            : `Regar para apoyar a ${currentSelectedFriend.name.split(' ')[0]} (+1 Vitalidad)`}
-                        </span>
-                      </>
-                    )}
-                  </button>
-                ) : isViewingOwnGarden ? (
-                  /* Caso 2: Fumador en su propia planta */
-                  <button
-                    type="button"
-                    onClick={handleWaterPlant}
-                    disabled={isWateringActive || timeRemainingSeconds > 0}
-                    className={`w-full h-13 font-semibold text-sm rounded-2xl flex items-center justify-center gap-2.5 transition-all shadow-md active:scale-[0.98] ${
-                      timeRemainingSeconds > 0
-                        ? 'bg-neutral-100 text-neutral-400 border border-neutral-200/80 shadow-none cursor-not-allowed'
-                        : 'bg-emerald-800 hover:bg-emerald-700 text-white shadow-emerald-800/20'
-                    }`}
-                  >
-                    {timeRemainingSeconds > 0 ? (
-                      <>
-                        <Clock className="w-4 h-4 text-neutral-400" />
-                        <span>Próximo riego en {formattedCountdown}</span>
-                      </>
-                    ) : (
-                      <>
-                        <Droplets className="w-4 h-4 fill-emerald-300 stroke-[2]" />
-                        <span>
-                          {isWateringActive ? 'Nutriendo raíces...' : 'Regar mi planta (+1 Crecimiento)'}
-                        </span>
-                      </>
-                    )}
-                  </button>
-                ) : (
-                  /* Caso 3: Fumador mirando el jardín de un amigo */
-                  <div className="text-center">
-                    <p className="text-xs text-neutral-400 mb-2">
-                      Estás visitando el jardín botánico de {effectiveSubjectName}
-                    </p>
+              {/* SIMULADOR DEV (SOLO CON ?debug=true) */}
+              {isDebugParam && (
+                <div className="px-6 py-2 border-t border-[rgba(232,183,94,0.1)] text-xs text-[#7C9481]">
+                  <div className="flex justify-between items-center mb-1">
                     <button
                       type="button"
-                      onClick={() => router.push('/dashboard/friends')}
-                      className="w-full h-11 bg-white border border-neutral-200 text-neutral-700 font-semibold text-xs rounded-2xl flex items-center justify-center gap-2 hover:bg-neutral-50 transition-colors shadow-2xs"
+                      onClick={() => setIsDemoActive(!isDemoActive)}
+                      className="underline text-[#E8B75E]"
                     >
-                      <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Enviar mensaje de ánimo</span>
+                      {isDemoActive ? 'Desactivar Simulador' : 'Simulador Dev'}
                     </button>
+                    <span>Etapa: {demoStage}/30</span>
                   </div>
-                )}
-              </div>
+                  {isDemoActive && (
+                    <input
+                      type="range"
+                      min="0"
+                      max="30"
+                      value={demoStage}
+                      onChange={(e) => setDemoStage(Number(e.target.value))}
+                      className="w-full accent-[#E8B75E]"
+                    />
+                  )}
+                </div>
+              )}
             </div>
-          )}
-
-          {/* VISTA 2: COLECCIÓN BOTÁNICA (SANTUARIO LIMPIO Y SIN TARJETAS PESADAS) */}
-          {activeTab === 'garden' && (
-            <div className="space-y-4 py-2 animate-in fade-in duration-300">
-              <div className="text-center space-y-1">
-                <h3 className="text-base font-bold text-neutral-950">
-                  {isViewingOwnGarden ? 'Tu Santuario Permanente' : `Colección de ${effectiveSubjectName.split(' ')[0]}`}
+          ) : (
+            /* =============================================================== */
+            /* VISTA DE COLECCIÓN BOTÁNICA                                      */
+            /* =============================================================== */
+            <div className="px-[20px] py-[16px] space-y-3 flex-1 overflow-y-auto no-scrollbar">
+              <div className="text-center space-y-0.5 mb-2">
+                <h3 className="font-fraunces text-base text-[#F1EEE2]">
+                  {isViewingOwnGarden ? 'Tu Santuario Botánico' : `Colección de ${effectiveSubjectName}`}
                 </h3>
-                <p className="text-xs text-neutral-400">
-                  {completedPlantsCount} de 6 especímenes desbloqueados
+                <p className="text-xs text-[#7C9481]">
+                  {completedPlantsCount} de {PLANT_SPECIES.length} especímenes cosechados
                 </p>
               </div>
 
-              {/* GRID LIMPIO DE ESPECIES */}
               <div className="grid grid-cols-2 gap-3">
                 {PLANT_SPECIES.map((species, idx) => {
                   const isHarvested = completedPlantsCount > idx
                   const isCurrentActive = completedPlantsCount === idx
-                  const stageForVisualizer = isHarvested ? 30 : isCurrentActive ? currentPlantStage : 0
 
                   return (
                     <div
                       key={species.id}
                       onClick={() => {
-                        if (isHarvested || isCurrentActive) {
-                          setInspectedPlant({
-                            species,
-                            speciesIndex: idx,
-                            isHarvested,
-                            wateringsCompleted: isHarvested ? 30 : currentPlantStage,
-                          })
-                        }
+                        setInspectedPlant({
+                          species,
+                          speciesIndex: idx,
+                          isHarvested,
+                          wateringsCompleted: isHarvested ? 30 : currentPlantStage,
+                        })
                       }}
-                      className={`relative rounded-3xl p-3.5 flex flex-col items-center justify-between text-center transition-all cursor-pointer ${
+                      className={`relative rounded-[22px] p-3.5 flex flex-col items-center justify-between text-center transition-all cursor-pointer border ${
                         isHarvested
-                          ? 'bg-white border border-emerald-200/80 shadow-2xs hover:border-emerald-400'
+                          ? 'border-[rgba(232,183,94,0.35)] bg-[rgba(232,183,94,0.06)] hover:border-[#E8B75E]'
                           : isCurrentActive
-                          ? 'bg-white border-2 border-emerald-700/60 shadow-xs ring-2 ring-emerald-500/10'
-                          : 'bg-neutral-100/50 border border-neutral-200/40 opacity-45'
+                          ? 'border-2 border-[#E8B75E] bg-[rgba(232,183,94,0.08)] shadow-[0_0_16px_rgba(232,183,94,0.15)]'
+                          : 'border-[rgba(232,183,94,0.08)] bg-[rgba(255,255,255,0.02)] opacity-40 hover:opacity-60'
                       }`}
                     >
-                      {/* Badge de estado discreto */}
-                      <div className="w-full flex justify-between items-center mb-1 text-[9px] font-bold">
-                        <span className="text-neutral-400">#{idx + 1}</span>
+                      <div className="w-full flex justify-between items-center text-[9px] font-bold text-[#7C9481] mb-1">
+                        <span>#{idx + 1}</span>
                         {isHarvested ? (
-                          <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-200/60">
-                            Madurada ✓
+                          <span className="text-[#E8B75E] bg-[#E8B75E]/10 px-1.5 py-0.5 rounded-full">
+                            Madurado ✓
                           </span>
                         ) : isCurrentActive ? (
-                          <span className="text-sky-700 bg-sky-50 px-1.5 py-0.5 rounded-full border border-sky-200/60">
-                            En cultivo
+                          <span className="text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded-full">
+                            En curso
                           </span>
                         ) : (
-                          <Lock className="w-3 h-3 text-neutral-400" />
+                          <Lock className="w-3 h-3 text-[#7C9481]" />
                         )}
                       </div>
 
-                      {/* Miniatura visual */}
-                      <div className="py-1">
-                        <GardenPlantVisualizer
-                          stage={stageForVisualizer}
-                          speciesIndex={idx}
-                          size="sm"
-                        />
+                      <div className="py-2 text-3xl">
+                        {idx === 0 ? '🪴' : idx === 1 ? '🌸' : idx === 2 ? '🌿' : idx === 3 ? '🌹' : idx === 4 ? '🌻' : '🌳'}
                       </div>
 
-                      {/* Título de la especie */}
                       <div className="w-full mt-1">
-                        <h4 className="text-xs font-bold text-neutral-900 truncate">
+                        <h4 className="font-fraunces text-xs font-medium text-[#F1EEE2] truncate">
                           {species.name}
                         </h4>
-                        <p className="text-[10px] text-neutral-400 italic truncate font-serif">
+                        <p className="font-fraunces italic text-[10px] text-[#7C9481] truncate">
                           {species.scientificName}
                         </p>
                       </div>
@@ -945,72 +1020,145 @@ function PlantPageContent() {
               </div>
             </div>
           )}
-
-          {/* SIMULADOR DEBUG (SOLO VISIBLE CON ?debug=true) */}
-          {isDebugParam && (
-            <div className="mt-4 pt-4 border-t border-neutral-200/60 text-xs">
-              <button
-                type="button"
-                onClick={() => setIsDemoActive(!isDemoActive)}
-                className="text-[10px] text-neutral-400 underline"
-              >
-                {isDemoActive ? 'Desactivar Simulador' : 'Simulador Dev'}
-              </button>
-              {isDemoActive && (
-                <div className="mt-2 space-y-1">
-                  <div className="flex justify-between">
-                    <span>Etapa: {demoStage}/30</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="30"
-                    value={demoStage}
-                    onChange={(e) => setDemoStage(Number(e.target.value))}
-                    className="w-full"
-                  />
-                </div>
-              )}
-            </div>
-          )}
+          <div className="h-8 shrink-0 pointer-events-none" />
         </main>
+
+        {/* =================================================================== */}
+        {/* 5. BOTÓN FLOTANTE SOS (SOS FAB)                                     */}
+        {/* =================================================================== */}
+        <button
+          type="button"
+          onClick={handleTriggerSOS}
+          aria-label="Activar alerta SOS"
+          className="fixed bottom-[64px] right-[max(16px,calc(50%-175px))] w-[46px] h-[46px] rounded-full flex items-center justify-center text-[18px] z-50 cursor-pointer shadow-[0_8px_24px_rgba(0,0,0,0.45)] transition-transform hover:scale-105 active:scale-90"
+          style={{
+            background: 'rgba(232, 84, 124, 0.14)',
+            backdropFilter: 'blur(8px)',
+            border: '1px solid rgba(232, 84, 124, 0.45)',
+            color: '#E8547C',
+          }}
+        >
+          ♥
+          {/* Anillo de pulso continuo */}
+          <span className="absolute -inset-[5px] rounded-full border-[1.5px] border-[rgba(232,84,124,0.28)] animate-pulse-ring pointer-events-none" />
+        </button>
+
+        {/* =================================================================== */}
+        {/* 6. BARRA DE NAVEGACIÓN INFERIOR (3 MENÚS)                           */}
+        {/* =================================================================== */}
+        <BottomNav currentTab="home" unreadFriendsCount={0} />
+      </div>
+
+      {/* =================================================================== */}
+      {/* 6. MODAL SOS: RESPIRACIÓN EN CAJA DE 60s Y ALERTA A AMIGOS         */}
+      {/* =================================================================== */}
+      {sosOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-sm rounded-[28px] p-6 space-y-5 border border-[rgba(232,84,124,0.3)] relative text-center"
+            style={{
+              background: 'radial-gradient(circle at 50% 0%, #2A171D, #16241C)',
+              color: '#F1EEE2',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setSosOpen(false)}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/10 text-[#A9BBA4] hover:text-white flex items-center justify-center transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="space-y-1">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#E8547C]">
+                Asistencia Inmediata
+              </span>
+              <h3 className="font-fraunces text-xl font-medium text-[#F1EEE2]">
+                ¡No estás solo! Respira conmigo
+              </h3>
+              <p className="text-xs text-[#A9BBA4]">
+                {sosSending
+                  ? 'Avisando a tus amigos de apoyo...'
+                  : 'Tus amigos han recibido una notificación push de auxilio.'}
+              </p>
+            </div>
+
+            {/* CÍRCULO GUIADO DE RESPIRACIÓN EN CAJA */}
+            <div className="relative w-44 h-44 mx-auto flex items-center justify-center">
+              <div
+                className={`absolute inset-0 rounded-full border-4 transition-all duration-1000 ${
+                  sosBreathPhase === 'Inhala'
+                    ? 'scale-110 border-[#E8B75E] bg-[#E8B75E]/10'
+                    : sosBreathPhase === 'Mantén'
+                    ? 'scale-105 border-cyan-400 bg-cyan-400/10'
+                    : 'scale-90 border-[#E8547C] bg-[#E8547C]/10'
+                }`}
+              />
+              <div className="text-center z-10 space-y-1">
+                <div className="font-fraunces text-2xl text-[#F1EEE2]">
+                  {sosBreathPhase}
+                </div>
+                <div className="text-xs text-[#A9BBA4]">{sosBreathTimer}s</div>
+              </div>
+            </div>
+
+            <p className="text-xs text-[#A9BBA4] italic max-w-xs mx-auto leading-relaxed">
+              El impulso agudo de nicotina dura menos de 3 minutos. Tu mente es más fuerte que la sustancia.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setSosOpen(false)}
+              className="w-full py-3 bg-[rgba(232,183,94,0.15)] hover:bg-[rgba(232,183,94,0.25)] border border-[rgba(232,183,94,0.3)] text-[#E8B75E] text-xs font-semibold rounded-2xl transition-colors"
+            >
+              Me siento más tranquilo
+            </button>
+          </div>
+        </div>
       )}
 
       {/* =================================================================== */}
-      {/* 5. MODAL DE INFORMACIÓN DE ESPECIE & SALUD PULMONAR (BAJO DEMANDA) */}
+      {/* 7. MODAL INFO DE LA ESPECIE & BENEFICIOS DE SALUD                  */}
       {/* =================================================================== */}
       {showSpeciesInfo && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-t-3xl sm:rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4 border border-neutral-100 animate-in slide-in-from-bottom-4 duration-200">
-            <div className="flex items-start justify-between">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-sm rounded-[28px] p-6 space-y-4 border border-[rgba(232,183,94,0.2)] relative"
+            style={{
+              background: 'linear-gradient(180deg, #1C2E24, #121D16)',
+              color: '#F1EEE2',
+            }}
+          >
+            <div className="flex justify-between items-start">
               <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-[#E8B75E] bg-[#E8B75E]/10 px-2 py-0.5 rounded-md">
                   Espécimen #{displayedSpeciesIndex + 1}
                 </span>
-                <h3 className="text-base font-bold text-neutral-950 mt-1">
+                <h3 className="font-fraunces text-lg font-medium text-[#F1EEE2] mt-1">
                   {displayedSpecies.name}
                 </h3>
-                <p className="text-xs text-neutral-400 italic font-serif">
+                <p className="font-fraunces italic text-xs text-[#7C9481]">
                   {displayedSpecies.scientificName}
                 </p>
               </div>
+
               <button
                 type="button"
                 onClick={() => setShowSpeciesInfo(false)}
-                className="w-8 h-8 rounded-full bg-neutral-100 text-neutral-500 hover:bg-neutral-200 flex items-center justify-center"
+                className="w-8 h-8 rounded-full bg-white/10 text-[#A9BBA4] hover:text-white flex items-center justify-center transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <p className="text-xs text-neutral-600 leading-relaxed">
+            <p className="text-xs text-[#A9BBA4] leading-relaxed">
               {displayedSpecies.lore}
             </p>
 
-            <div className="p-3.5 bg-emerald-50/80 border border-emerald-200/60 rounded-2xl flex items-start gap-2.5">
-              <HeartPulse className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
-              <p className="text-xs text-emerald-900 leading-snug">
-                <span className="font-semibold">Recuperación pulmonar:</span>{' '}
+            <div className="p-3.5 rounded-2xl bg-[rgba(232,183,94,0.06)] border border-[rgba(232,183,94,0.18)] flex items-start gap-2.5">
+              <HeartPulse className="w-4 h-4 text-[#E8B75E] shrink-0 mt-0.5" />
+              <p className="text-xs text-[#F1EEE2] leading-snug">
+                <span className="font-semibold text-[#E8B75E]">Beneficio clínico:</span>{' '}
                 {displayedSpecies.healingBenefit}
               </p>
             </div>
@@ -1018,73 +1166,143 @@ function PlantPageContent() {
             <button
               type="button"
               onClick={() => setShowSpeciesInfo(false)}
-              className="w-full py-2.5 bg-neutral-950 text-white text-xs font-semibold rounded-2xl hover:bg-neutral-800 transition-colors"
+              className="w-full py-2.5 bg-[#E8B75E] text-[#2B1C08] font-semibold text-xs rounded-2xl hover:bg-[#E8B75E]/90 transition-colors"
             >
-              Entendido
+              Comprendido
             </button>
           </div>
         </div>
       )}
 
       {/* =================================================================== */}
-      {/* 6. MODAL DE INSPECCIÓN DE PLANTA COSECHADA                         */}
+      {/* 8. MODAL AÑADIR AMIGO / COMPARTIR CÓDIGO                            */}
       {/* =================================================================== */}
-      {inspectedPlant && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl space-y-4 border border-neutral-100 animate-in zoom-in-95 duration-200">
-            <div className="flex items-start justify-between">
+      {showAddFriendModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-sm rounded-[28px] p-6 space-y-4 border border-[rgba(232,183,94,0.2)] relative"
+            style={{
+              background: 'linear-gradient(180deg, #1C2E24, #121D16)',
+              color: '#F1EEE2',
+            }}
+          >
+            <div className="flex justify-between items-start">
               <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
-                  Espécimen #{inspectedPlant.speciesIndex + 1}
-                </span>
-                <h3 className="text-base font-bold text-neutral-950 mt-1">
-                  {inspectedPlant.species.name}
+                <h3 className="font-fraunces text-lg font-medium text-[#F1EEE2]">
+                  Conectar con un amigo
                 </h3>
-                <p className="text-xs text-neutral-400 italic font-serif">
-                  {inspectedPlant.species.scientificName}
+                <p className="text-xs text-[#7C9481] mt-0.5">
+                  Comparte tu código para que riegue tu planta y te asista
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setInspectedPlant(null)}
-                className="w-8 h-8 rounded-full bg-neutral-100 text-neutral-500 hover:bg-neutral-200 flex items-center justify-center"
+                onClick={() => setShowAddFriendModal(false)}
+                className="w-8 h-8 rounded-full bg-white/10 text-[#A9BBA4] hover:text-white flex items-center justify-center transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="py-2 flex justify-center">
-              <GardenPlantVisualizer
-                stage={inspectedPlant.isHarvested ? 30 : inspectedPlant.wateringsCompleted}
-                speciesIndex={inspectedPlant.speciesIndex}
-                size="md"
-              />
+            <div className="p-3.5 bg-black/20 rounded-2xl border border-[rgba(232,183,94,0.12)] space-y-2 text-center">
+              <div className="text-[10px] uppercase tracking-wider text-[#7C9481]">
+                Tu identificador de jardín
+              </div>
+              <div className="font-mono text-xs text-[#E8B75E] select-all break-all">
+                {userId}
+              </div>
             </div>
 
-            <div className="space-y-2 text-xs text-neutral-600">
-              <p className="leading-relaxed">{inspectedPlant.species.lore}</p>
-              <div className="p-3 bg-emerald-50/80 border border-emerald-200/60 rounded-2xl flex items-start gap-2.5">
-                <HeartPulse className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />
-                <p className="text-xs text-emerald-900 leading-snug">
-                  <span className="font-semibold">Beneficio en la salud:</span>{' '}
-                  {inspectedPlant.species.healingBenefit}
-                </p>
-              </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (navigator?.clipboard && userId) {
+                    navigator.clipboard.writeText(userId)
+                    setInviteCopied(true)
+                    setTimeout(() => setInviteCopied(false), 2000)
+                  }
+                }}
+                className="flex-1 py-2.5 bg-[rgba(232,183,94,0.15)] border border-[rgba(232,183,94,0.3)] text-[#E8B75E] text-xs font-semibold rounded-2xl flex items-center justify-center gap-1.5 hover:bg-[rgba(232,183,94,0.25)] transition-colors"
+              >
+                {inviteCopied ? <CheckCheck className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                <span>{inviteCopied ? 'Copiado' : 'Copiar ID'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddFriendModal(false)
+                  router.push('/dashboard/friends')
+                }}
+                className="flex-1 py-2.5 bg-[#E8B75E] text-[#2B1C08] text-xs font-semibold rounded-2xl flex items-center justify-center gap-1.5 hover:bg-[#E8B75E]/90 transition-colors"
+              >
+                <UserPlus className="w-4 h-4" />
+                <span>Buscar amigos</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* 9. MODAL INSPECCIÓN DE ESPÉCIMEN COSECHADO                         */}
+      {/* =================================================================== */}
+      {inspectedPlant && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-sm rounded-[28px] p-6 space-y-4 border border-[rgba(232,183,94,0.2)] relative text-center"
+            style={{
+              background: 'linear-gradient(180deg, #1C2E24, #121D16)',
+              color: '#F1EEE2',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setInspectedPlant(null)}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/10 text-[#A9BBA4] hover:text-white flex items-center justify-center transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="text-4xl py-2">
+              {inspectedPlant.speciesIndex === 0 ? '🪴' : inspectedPlant.speciesIndex === 1 ? '🌸' : inspectedPlant.speciesIndex === 2 ? '🌿' : inspectedPlant.speciesIndex === 3 ? '🌹' : inspectedPlant.speciesIndex === 4 ? '🌻' : '🌳'}
+            </div>
+
+            <div>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-[#E8B75E] bg-[#E8B75E]/10 px-2 py-0.5 rounded-md">
+                Espécimen #{inspectedPlant.speciesIndex + 1}
+              </span>
+              <h3 className="font-fraunces text-xl font-medium text-[#F1EEE2] mt-1">
+                {inspectedPlant.species.name}
+              </h3>
+              <p className="font-fraunces italic text-xs text-[#7C9481]">
+                {inspectedPlant.species.scientificName}
+              </p>
+            </div>
+
+            <p className="text-xs text-[#A9BBA4] leading-relaxed">
+              {inspectedPlant.species.lore}
+            </p>
+
+            <div className="p-3 rounded-2xl bg-[rgba(232,183,94,0.06)] border border-[rgba(232,183,94,0.18)] text-left flex items-start gap-2.5">
+              <HeartPulse className="w-4 h-4 text-[#E8B75E] shrink-0 mt-0.5" />
+              <p className="text-xs text-[#F1EEE2] leading-snug">
+                <span className="font-semibold text-[#E8B75E]">Salud pulmonar:</span>{' '}
+                {inspectedPlant.species.healingBenefit}
+              </p>
             </div>
 
             <button
               type="button"
               onClick={() => setInspectedPlant(null)}
-              className="w-full py-2.5 bg-neutral-950 text-white text-xs font-semibold rounded-2xl hover:bg-neutral-800 transition-colors"
+              className="w-full py-2.5 bg-[#E8B75E] text-[#2B1C08] font-semibold text-xs rounded-2xl hover:bg-[#E8B75E]/90 transition-colors"
             >
               Cerrar
             </button>
           </div>
         </div>
       )}
-
-      {/* BARRA DE NAVEGACIÓN INFERIOR */}
-      <BottomNav currentTab="plant" userRole={profile?.role || 'smoker'} />
     </div>
   )
 }
@@ -1093,13 +1311,14 @@ export default function PlantPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-[100dvh] w-full bg-gradient-to-b from-[#F0FDF4] to-[#F8FAF9] flex flex-col items-center justify-center max-w-md mx-auto p-6 space-y-4">
-          <div className="w-14 h-14 rounded-3xl bg-emerald-900/10 text-emerald-800 flex items-center justify-center animate-pulse">
-            <Sprout className="w-7 h-7 stroke-[1.8]" />
+        <div
+          className="min-h-screen w-full flex items-center justify-center p-4"
+          style={{ background: 'radial-gradient(120% 90% at 50% -10%, #223729 0%, #16241C 45%, #0F1913 100%)' }}
+        >
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-12 h-12 rounded-full border-2 border-[#E8B75E]/30 border-t-[#E8B75E] animate-spin" />
+            <p className="font-fraunces text-sm text-[#A9BBA4]">Abriendo Jardín...</p>
           </div>
-          <p className="text-xs font-semibold tracking-wider text-neutral-400 uppercase">
-            Abriendo Santuario...
-          </p>
         </div>
       }
     >

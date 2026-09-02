@@ -1,20 +1,14 @@
 'use client'
 
-import React, { useState, useEffect, useCallback, useTransition, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
-  Home,
   Users,
-  Award,
-  User,
-  Droplets,
-  Sprout,
   Check,
   X,
   UserPlus,
   Sparkles,
-  MessageCircle,
   Search,
   CheckCircle2,
   Clock,
@@ -24,17 +18,14 @@ import {
   Share2,
   Copy,
   CheckCheck,
-  HeartHandshake,
-  Bell,
-  BellRing,
+  HeartPulse,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
 import FriendChatModal from '@/components/FriendChatModal'
+import { dispatchPushAlertToFriends } from '@/lib/push-notifications'
 import BottomNav from '@/components/BottomNav'
-import NotificationBellButton from '@/components/NotificationBellButton'
-import { getPushPermission, requestPushPermissionAndSubscribe, isPushSupported } from '@/lib/push-notifications'
 
 type TabView = 'friends' | 'requests'
 
@@ -45,8 +36,6 @@ interface FriendItem {
   name: string
   status: string
   role: 'smoker' | 'friend'
-  avatarBg: string
-  avatarText: string
   isWatered: boolean
   smokeFreeSince?: string | null
 }
@@ -57,8 +46,6 @@ interface FriendRequestItem {
   name: string
   initials: string
   role: 'smoker' | 'friend'
-  avatarBg: string
-  avatarText: string
   createdAt: string
 }
 
@@ -75,24 +62,6 @@ const isValidUUID = (id?: string | null): boolean => {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
 }
 
-const AVATAR_COLORS = [
-  { bg: 'bg-emerald-100', text: 'text-emerald-800' },
-  { bg: 'bg-teal-100', text: 'text-teal-800' },
-  { bg: 'bg-sky-100', text: 'text-sky-800' },
-  { bg: 'bg-amber-100', text: 'text-amber-800' },
-  { bg: 'bg-rose-100', text: 'text-rose-800' },
-  { bg: 'bg-indigo-100', text: 'text-indigo-800' },
-]
-
-function getAvatarColor(str: string) {
-  let hash = 0
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  const index = Math.abs(hash) % AVATAR_COLORS.length
-  return AVATAR_COLORS[index]
-}
-
 function getInitials(name: string) {
   return (
     name
@@ -105,50 +74,60 @@ function getInitials(name: string) {
   )
 }
 
-// Datos de demostración iniciales (usados si aún no hay amigos en DB)
+// Datos demo por si la cuenta es totalmente nueva sin conexiones
 const DEFAULT_DEMO_FRIENDS: FriendItem[] = [
   {
     id: '00000000-0000-4000-8000-000000000001',
     friendshipId: 'demo-1',
-    initials: 'MC',
-    name: 'Marta Coll',
-    status: '12 días sin fumar',
+    initials: 'VB',
+    name: 'Vinyet Blasi Ventalló',
+    status: '3 días sin fumar',
     role: 'smoker',
-    avatarBg: 'bg-emerald-100',
-    avatarText: 'text-emerald-800',
     isWatered: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000002',
     friendshipId: 'demo-2',
-    initials: 'JP',
-    name: 'Jordi Pons',
-    status: '8 días sin fumar',
+    initials: 'A',
+    name: 'Angi',
+    status: '3 días sin fumar',
     role: 'smoker',
-    avatarBg: 'bg-amber-100',
-    avatarText: 'text-amber-800',
     isWatered: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000003',
     friendshipId: 'demo-3',
-    initials: 'LV',
-    name: 'Laura Vidal',
-    status: '3 días sin fumar',
-    role: 'smoker',
-    avatarBg: 'bg-sky-100',
-    avatarText: 'text-sky-800',
+    initials: 'GM',
+    name: 'Galix menXP',
+    status: 'Guardián',
+    role: 'friend',
     isWatered: false,
   },
   {
     id: '00000000-0000-4000-8000-000000000004',
     friendshipId: 'demo-4',
-    initials: 'DR',
-    name: 'David Roca',
-    status: 'Guardián de apoyo',
+    initials: 'SA',
+    name: 'Sergi Amat',
+    status: 'Guardián',
     role: 'friend',
-    avatarBg: 'bg-neutral-100',
-    avatarText: 'text-neutral-700',
+    isWatered: false,
+  },
+  {
+    id: '00000000-0000-4000-8000-000000000005',
+    friendshipId: 'demo-5',
+    initials: 'NX',
+    name: 'Nona Xwom',
+    status: 'Guardián',
+    role: 'friend',
+    isWatered: false,
+  },
+  {
+    id: '00000000-0000-4000-8000-000000000006',
+    friendshipId: 'demo-6',
+    initials: 'X',
+    name: 'Xavi',
+    status: 'Guardián',
+    role: 'friend',
     isWatered: false,
   },
 ]
@@ -160,7 +139,7 @@ export default function FriendsDashboard() {
 
   // Usuario autenticado
   const [userId, setUserId] = useState<string | null>(null)
-  const [userProfile, setUserProfile] = useState<Profile | null>(null)
+  const [userName, setUserName] = useState<string>('Un amigo')
   const [squadCode, setSquadCode] = useState<string>('')
   const [copiedCode, setCopiedCode] = useState<boolean>(false)
 
@@ -181,9 +160,15 @@ export default function FriendsDashboard() {
   const activeChatFriendRef = useRef<FriendItem | null>(null)
   const lastReadTimestampsRef = useRef<Record<string, string>>({})
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({})
-  const [pushPermission, setPushPermission] = useState<string>('default')
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [processingId, setProcessingId] = useState<string | null>(null)
+
+  // SOS Crisis modal
+  const [sosOpen, setSosOpen] = useState<boolean>(false)
+  const [sosSending, setSosSending] = useState<boolean>(false)
+  const [sosBreathPhase, setSosBreathPhase] = useState<'Inhala' | 'Mantén' | 'Exhala'>('Inhala')
+  const [sosBreathTimer, setSosBreathTimer] = useState<number>(60)
 
   useEffect(() => {
     activeChatFriendRef.current = activeChatFriend
@@ -191,10 +176,10 @@ export default function FriendsDashboard() {
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg)
-    setTimeout(() => setToastMessage(null), 3000)
+    setTimeout(() => setToastMessage(null), 3200)
   }, [])
 
-  // Cargar conteo de mensajes no leídos por amigo de forma infalible
+  // Cargar conteo de mensajes no leídos por amigo
   const loadUnreadCounts = useCallback(async (currentUserId: string) => {
     try {
       const { data: unreadRows } = await supabase
@@ -205,18 +190,15 @@ export default function FriendsDashboard() {
 
       const counts: Record<string, number> = {}
       unreadRows?.forEach((r) => {
-        // Consultar marca temporal de última lectura en memoria o almacenamiento local
         let lastRead: string | null = lastReadTimestampsRef.current[r.sender_id] || null
         if (!lastRead && typeof window !== 'undefined') {
           lastRead = localStorage.getItem(`exhala_chat_read_${currentUserId}_${r.sender_id}`)
         }
 
-        // Si el mensaje fue recibido antes o en el momento en que se abrió el chat, no contarlo
         if (lastRead && new Date(r.created_at).getTime() <= new Date(lastRead).getTime()) {
           return
         }
 
-        // Si el modal de chat con este amigo está abierto en pantalla ahora mismo, no contarlo
         if (activeChatFriendRef.current?.id === r.sender_id) {
           return
         }
@@ -224,7 +206,6 @@ export default function FriendsDashboard() {
         counts[r.sender_id] = (counts[r.sender_id] || 0) + 1
       })
 
-      // Asegurar que si el chat está activo, el badge sea 0
       if (activeChatFriendRef.current?.id) {
         counts[activeChatFriendRef.current.id] = 0
       }
@@ -235,13 +216,40 @@ export default function FriendsDashboard() {
     }
   }, [])
 
+  // Comprobar notificaciones no leídas de campana
+  const loadUnreadNotifications = useCallback(async (currentUserId: string) => {
+    try {
+      const lastRead =
+        typeof window !== 'undefined'
+          ? localStorage.getItem('last_read_notifications_at') ||
+            new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+          : new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+
+      const { count: unreadWater } = await supabase
+        .from('plant_actions')
+        .select('id', { count: 'exact', head: true })
+        .eq('smoker_id', currentUserId)
+        .neq('friend_id', currentUserId)
+        .gt('created_at', lastRead)
+
+      const { count: unreadSos } = await supabase
+        .from('sos_notifications')
+        .select('id', { count: 'exact', head: true })
+        .eq('friend_id', currentUserId)
+        .gt('created_at', lastRead)
+
+      setUnreadNotificationsCount((unreadWater || 0) + (unreadSos || 0))
+    } catch (e) {
+      console.warn('Error loading notifications count:', e)
+    }
+  }, [])
+
   // Abrir chat y marcar mensajes de ese amigo como leídos
   const handleOpenChat = async (friend: FriendItem) => {
     const nowIso = new Date().toISOString()
     activeChatFriendRef.current = friend
     setActiveChatFriend(friend)
 
-    // Guardar marca de tiempo de lectura
     lastReadTimestampsRef.current[friend.id] = nowIso
     if (typeof window !== 'undefined' && userId) {
       try {
@@ -249,7 +257,6 @@ export default function FriendsDashboard() {
       } catch {}
     }
 
-    // Quitar badge de la interfaz inmediatamente
     setUnreadCounts((prev) => {
       const updated = { ...prev }
       delete updated[friend.id]
@@ -261,7 +268,6 @@ export default function FriendsDashboard() {
         const { data: sessionData } = await supabase.auth.getSession()
         const token = sessionData.session?.access_token
 
-        // 1. Llamada a endpoint API servidor
         fetch('/api/messages/read', {
           method: 'POST',
           headers: {
@@ -271,7 +277,6 @@ export default function FriendsDashboard() {
           body: JSON.stringify({ senderId: friend.id, receiverId: userId }),
         }).catch(() => {})
 
-        // 2. Llamada directa vía cliente Supabase
         supabase
           .from('messages')
           .update({ read_at: nowIso })
@@ -285,22 +290,9 @@ export default function FriendsDashboard() {
     }
   }
 
-  // Activar Notificaciones Push directamente
-  const handleActivatePushNotification = async () => {
-    if (!userId) return
-    const res = await requestPushPermissionAndSubscribe(userId)
-    setPushPermission(res.permission)
-    if (res.success) {
-      showToast('🔔 ¡Notificaciones activadas en este dispositivo!')
-    } else {
-      showToast(res.error || 'No se pudieron activar las notificaciones.')
-    }
-  }
-
-  // Cargar amistades reales y solicitudes desde Supabase
+  // Cargar amistades reales y solicitudes
   const loadFriendsData = useCallback(async (currentUserId: string) => {
     try {
-      // 1. Obtener todas las filas de friendships donde participe el usuario
       const { data: friendships, error: friendshipsError } = await supabase
         .from('friendships')
         .select(`
@@ -320,7 +312,6 @@ export default function FriendsDashboard() {
       }
 
       if (!friendships || friendships.length === 0) {
-        // Dejar demo friends si no tiene conexiones
         return
       }
 
@@ -340,15 +331,13 @@ export default function FriendsDashboard() {
 
         const name = otherUser.full_name || 'Compañero'
         const initials = getInitials(name)
-        const color = getAvatarColor(name)
-        const status = row.status || 'accepted' // fallback for older rows
+        const status = row.status || 'accepted'
 
         if (status === 'accepted') {
           if (seenAcceptedUserIds.has(otherUser.id)) return
           seenAcceptedUserIds.add(otherUser.id)
 
-          // Amistad activa
-          let statusText = 'Guardián de apoyo'
+          let statusText = 'Guardián'
           if (otherUser.role === 'smoker') {
             if (otherUser.smoke_free_since) {
               const diffMs = Math.max(0, Date.now() - new Date(otherUser.smoke_free_since).getTime())
@@ -366,13 +355,10 @@ export default function FriendsDashboard() {
             name,
             status: statusText,
             role: otherUser.role || 'smoker',
-            avatarBg: color.bg,
-            avatarText: color.text,
             isWatered: false,
             smokeFreeSince: otherUser.smoke_free_since,
           })
         } else if (status === 'pending') {
-          // Solicitud pendiente
           if (isMeSender) {
             if (seenSentUserIds.has(otherUser.id)) return
             seenSentUserIds.add(otherUser.id)
@@ -383,8 +369,6 @@ export default function FriendsDashboard() {
               name,
               initials,
               role: otherUser.role || 'smoker',
-              avatarBg: color.bg,
-              avatarText: color.text,
               createdAt: row.created_at,
             })
           } else {
@@ -397,8 +381,6 @@ export default function FriendsDashboard() {
               name,
               initials,
               role: otherUser.role || 'smoker',
-              avatarBg: color.bg,
-              avatarText: color.text,
               createdAt: row.created_at,
             })
           }
@@ -415,7 +397,7 @@ export default function FriendsDashboard() {
     }
   }, [])
 
-  // Inicializar usuario autenticado
+  // Inicializar usuario
   useEffect(() => {
     async function init() {
       try {
@@ -431,17 +413,17 @@ export default function FriendsDashboard() {
 
         const { data: profile } = await supabase
           .from('profiles')
-          .select('*')
+          .select('full_name')
           .eq('id', user.id)
           .maybeSingle()
 
-        if (profile) setUserProfile(profile)
+        if (profile?.full_name) setUserName(profile.full_name)
 
-        setPushPermission(getPushPermission())
         await loadFriendsData(user.id)
         await loadUnreadCounts(user.id)
+        await loadUnreadNotifications(user.id)
 
-        // Escuchar mensajes entrantes en tiempo real para notificaciones globales y contador rojo
+        // Realtime para inbox de mensajes
         const channelName = `user-inbox-${user.id}-${Date.now()}`
         const inboxChannel = supabase
           .channel(channelName)
@@ -457,7 +439,6 @@ export default function FriendsDashboard() {
               const newMsg = payload?.new
               if (!newMsg) return
 
-              // Si el usuario ya está dentro del chat con este remitente, marcar como leído y no incrementar badge
               if (activeChatFriendRef.current?.id === newMsg.sender_id) {
                 const nowIso = new Date().toISOString()
                 lastReadTimestampsRef.current[newMsg.sender_id] = nowIso
@@ -466,7 +447,6 @@ export default function FriendsDashboard() {
                     localStorage.setItem(`exhala_chat_read_${user.id}_${newMsg.sender_id}`, nowIso)
                   } catch {}
                 }
-
                 fetch('/api/messages/read', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -475,28 +455,23 @@ export default function FriendsDashboard() {
                 return
               }
 
-              // Incrementar contador no leído para el remitente
               setUnreadCounts((prev) => ({
                 ...prev,
                 [newMsg.sender_id]: (prev[newMsg.sender_id] || 0) + 1,
               }))
 
-              // Obtener nombre del remitente si está disponible
               const { data: senderProfile } = await supabase
                 .from('profiles')
                 .select('full_name')
                 .eq('id', newMsg.sender_id)
                 .maybeSingle()
 
-              const senderName = senderProfile?.full_name || 'Un amigo'
-              showToast(
-                `💬 Mensaje de ${senderName}: "${newMsg.content.slice(0, 35)}${newMsg.content.length > 35 ? '...' : ''}"`
-              )
+              const senderName = senderProfile?.full_name?.split(' ')[0] || 'Un amigo'
+              showToast(`💬 Mensaje de ${senderName}: "${newMsg.content.slice(0, 30)}..."`)
             }
           )
           .subscribe()
 
-        // Sincronización continua de mensajes no leídos cada 3.5s
         const unreadInterval = setInterval(() => {
           loadUnreadCounts(user.id)
         }, 3500)
@@ -513,9 +488,28 @@ export default function FriendsDashboard() {
     }
 
     init()
-  }, [router, loadFriendsData, loadUnreadCounts, showToast])
+  }, [router, loadFriendsData, loadUnreadCounts, loadUnreadNotifications, showToast])
 
-  // Búsqueda por Nombre en tiempo real
+  // Mini ciclo de respiración SOS
+  useEffect(() => {
+    if (!sosOpen || sosBreathTimer <= 0) return
+
+    const interval = setInterval(() => {
+      setSosBreathTimer((t) => {
+        const next = t - 1
+        const elapsed = 60 - next
+        const cycle = elapsed % 12
+        if (cycle < 4) setSosBreathPhase('Inhala')
+        else if (cycle < 8) setSosBreathPhase('Mantén')
+        else setSosBreathPhase('Exhala')
+        return next
+      })
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [sosOpen, sosBreathTimer])
+
+  // Búsqueda por Nombre
   useEffect(() => {
     if (!searchQuery.trim() || !userId) {
       setSearchResults([])
@@ -546,21 +540,19 @@ export default function FriendsDashboard() {
     return () => clearTimeout(timer)
   }, [searchQuery, userId])
 
-  // Enviar solicitud de amistad por búsqueda
+  // Enviar solicitud de amistad
   const handleSendFriendRequest = async (targetUser: SearchResultUser) => {
     if (!userId || !targetUser.id || processingId) return
     setProcessingId(targetUser.id)
 
     try {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('friendships')
         .insert({
           smoker_id: userId,
           friend_id: targetUser.id,
           status: 'pending',
         })
-        .select()
-        .single()
 
       if (error) {
         if (error.code === '23505') {
@@ -570,19 +562,17 @@ export default function FriendsDashboard() {
         }
       } else {
         setSentRequestMap((prev) => ({ ...prev, [targetUser.id]: true }))
-        showToast(`¡Solicitud enviada a ${targetUser.full_name || 'tu amigo'}! 🌿`)
+        showToast(`¡Solicitud enviada a ${targetUser.full_name?.split(' ')[0] || 'tu amigo'}! 🌿`)
 
         try {
           confetti({
-            particleCount: 25,
+            particleCount: 30,
             spread: 50,
             origin: { y: 0.65 },
-            colors: ['#10B981', '#34D399', '#6EE7B7'],
-            disableForReducedMotion: true,
+            colors: ['#E8B75E', '#A9BBA4', '#52B788'],
           })
         } catch {}
 
-        // Recargar datos
         loadFriendsData(userId)
       }
     } catch (err: any) {
@@ -593,7 +583,7 @@ export default function FriendsDashboard() {
     }
   }
 
-  // Aceptar solicitud de amistad
+  // Aceptar solicitud
   const handleAcceptRequest = async (request: FriendRequestItem) => {
     if (!userId || processingId) return
     setProcessingId(request.id)
@@ -613,11 +603,10 @@ export default function FriendsDashboard() {
           particleCount: 40,
           spread: 70,
           origin: { y: 0.6 },
-          colors: ['#10B981', '#059669', '#38BDF8'],
+          colors: ['#E8B75E', '#A9BBA4', '#52B788', '#F1EEE2'],
         })
       } catch {}
 
-      // Actualizar estado local inmediato
       setPendingReceived((prev) => prev.filter((r) => r.id !== request.id))
       await loadFriendsData(userId)
     } catch (err: any) {
@@ -634,16 +623,12 @@ export default function FriendsDashboard() {
     setProcessingId(requestId)
 
     try {
-      const { error } = await supabase
-        .from('friendships')
-        .delete()
-        .eq('id', requestId)
-
+      const { error } = await supabase.from('friendships').delete().eq('id', requestId)
       if (error) throw error
 
       if (isReceived) {
         setPendingReceived((prev) => prev.filter((r) => r.id !== requestId))
-        showToast('Solicitud rechazada.')
+        showToast('Solicitud descartada.')
       } else {
         setPendingSent((prev) => prev.filter((r) => r.id !== requestId))
         showToast('Solicitud cancelada.')
@@ -656,10 +641,10 @@ export default function FriendsDashboard() {
     }
   }
 
-  // Acción de regar / apoyar
+  // Regar planta del amigo
   const handleToggleWater = async (friend: FriendItem) => {
     setFriendsList((prev) =>
-      prev.map((f) => (f.id === friend.id ? { ...f, isWatered: !f.isWatered } : f))
+      prev.map((f) => (f.id === friend.id ? { ...f, isWatered: true } : f))
     )
 
     if (userId && isValidUUID(friend.id) && friend.id !== userId) {
@@ -674,691 +659,770 @@ export default function FriendsDashboard() {
 
     try {
       confetti({
-        particleCount: 25,
-        spread: 50,
+        particleCount: 35,
+        spread: 55,
         origin: { y: 0.65 },
-        colors: ['#2D6A4F', '#52B788', '#38BDF8'],
-        disableForReducedMotion: true,
+        colors: ['#E8B75E', '#52B788', '#38BDF8'],
       })
     } catch {}
 
-    showToast(`Has regado la planta de ${friend.name.split(' ')[0]} 💧`)
+    showToast(`💧 Has regado la planta de ${friend.name.split(' ')[0]}`)
   }
 
-  const handleCopyCode = () => {
-    if (squadCode) {
-      navigator.clipboard.writeText(squadCode)
-      setCopiedCode(true)
-      setTimeout(() => setCopiedCode(false), 2000)
+  // Activar SOS de emergencia
+  const handleTriggerSOS = async () => {
+    setSosOpen(true)
+    setSosSending(true)
+    setSosBreathTimer(60)
+
+    try {
+      if (userId) {
+        const { data: friendships } = await supabase
+          .from('friendships')
+          .select('friend_id, smoker_id')
+          .or(`smoker_id.eq.${userId},friend_id.eq.${userId}`)
+          .eq('status', 'accepted')
+
+        const friendIds = (friendships || []).map((f) =>
+          f.smoker_id === userId ? f.friend_id : f.smoker_id
+        )
+        const uniqueFriendIds = Array.from(new Set(friendIds))
+
+        if (uniqueFriendIds.length > 0) {
+          const notifications = uniqueFriendIds.map((targetId) => ({
+            smoker_id: userId,
+            friend_id: targetId,
+            message: `${userName} necesita apoyo urgente. ¡Tiene un momento de antojo!`,
+          }))
+
+          await supabase.from('sos_notifications').insert(notifications)
+
+          try {
+            await dispatchPushAlertToFriends(userId, userName)
+          } catch (e) {
+            console.warn('Push error:', e)
+          }
+        }
+      }
+
+      try {
+        confetti({
+          particleCount: 30,
+          spread: 60,
+          origin: { y: 0.7 },
+          colors: ['#E8547C', '#FF7B98', '#E8B75E'],
+        })
+      } catch {}
+    } catch (err) {
+      console.error('Error in SOS:', err)
+    } finally {
+      setSosSending(false)
     }
   }
 
-  // Separación de listas activas
+  // Listas agrupadas
   const quittingFriends = friendsList.filter((f) => f.role === 'smoker')
   const supportingFriends = friendsList.filter((f) => f.role === 'friend')
-  const totalPendingCount = pendingReceived.length
+
+  const totalUnreadMessages = Object.values(unreadCounts).reduce((acc, c) => acc + c, 0)
+
+  // Asignar colores de avatar c1, c2, c3
+  const getAvatarGradientClass = (index: number) => {
+    const cycle = index % 3
+    if (cycle === 0) return 'c1'
+    if (cycle === 1) return 'c2'
+    return 'c3'
+  }
 
   if (loading) {
     return (
-      <div className="min-h-[100dvh] w-full bg-[#F8FAF9] flex flex-col items-center justify-center max-w-md mx-auto p-6 space-y-3">
-        <div className="w-12 h-12 rounded-2xl bg-white border border-neutral-200 shadow-sm flex items-center justify-center animate-pulse">
-          <Users className="w-6 h-6 text-neutral-900" />
+      <div
+        className="min-h-screen w-full flex items-center justify-center p-4"
+        style={{
+          background: 'radial-gradient(120% 90% at 50% -10%, #223729 0%, #16241C 45%, #0F1913 100%)',
+        }}
+      >
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-12 h-12 rounded-full border-2 border-[#E8B75E]/30 border-t-[#E8B75E] animate-spin" />
+          <p className="font-fraunces text-sm text-[#A9BBA4]">Cargando Comunidad...</p>
         </div>
-        <p className="text-xs font-semibold uppercase tracking-widest text-neutral-400">
-          Cargando comunidad...
-        </p>
       </div>
     )
   }
 
   return (
-    <div className="min-h-[100dvh] w-full bg-[#F8FAF9] text-neutral-900 flex flex-col justify-between max-w-md mx-auto relative antialiased select-none pb-24">
-      
-      {/* NOTIFICACIÓN TOAST MINIMALISTA */}
-      {toastMessage && (
-        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-sm bg-neutral-950 text-white text-xs py-3 px-4 rounded-2xl shadow-lg flex items-center gap-2.5 animate-in fade-in slide-in-from-top duration-300">
-          <div className="w-4 h-4 rounded-full bg-emerald-400/20 text-emerald-400 flex items-center justify-center shrink-0">
-            <Check className="w-3 h-3 stroke-[3]" />
-          </div>
-          <span className="font-medium leading-tight">{toastMessage}</span>
-        </div>
-      )}
+    <div
+      className="min-h-screen w-full flex justify-center py-0 sm:py-7 antialiased select-none"
+      style={{
+        background: 'radial-gradient(120% 90% at 50% -10%, #223729 0%, #16241C 45%, #0F1913 100%)',
+        fontFamily: "'Work Sans', sans-serif",
+        color: '#F1EEE2',
+      }}
+    >
+      {/* PANTALLA CONTENEDORA (390px) */}
+      <div
+        className="w-full sm:w-[390px] min-h-screen sm:min-h-[844px] relative flex flex-col sm:rounded-[34px] overflow-hidden sm:border sm:border-[rgba(232,183,94,0.08)] sm:shadow-[0_40px_80px_rgba(0,0,0,0.5)] pb-[110px]"
+        style={{
+          background: 'radial-gradient(120% 90% at 50% -10%, #223729 0%, #16241C 45%, #0F1913 100%)',
+        }}
+      >
+        {/* TEXTURA SUTIL DE HOJAS Y LUZ */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background:
+              'radial-gradient(circle at 12% 6%, rgba(232,183,94,0.06), transparent 38%), radial-gradient(circle at 90% 96%, rgba(167,150,216,0.05), transparent 42%)',
+          }}
+        />
 
-      {/* CONTENEDOR PRINCIPAL */}
-      <main className="flex-1 px-5 pt-7 pb-4 flex flex-col space-y-4">
-        
-        {/* CABECERA CON BOTÓN RÁPIDO DE BÚSQUEDA */}
-        <div className="flex items-center justify-between">
-          <div className="space-y-0.5">
-            <h1 className="text-2xl font-bold tracking-tight text-neutral-950 font-sans">
-              Comunidad
-            </h1>
-            <p className="text-xs text-neutral-400 font-medium">
-              {friendsList.length} {friendsList.length === 1 ? 'conexión activa' : 'conexiones activas'}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <NotificationBellButton userId={userId} sizeClasses="w-10 h-10" iconSize="w-5 h-5" />
-
-            <button
-              type="button"
-              onClick={() => {
-                setShowSearchModal(true)
-                setSearchQuery('')
-                setSearchResults([])
-              }}
-              className="flex items-center gap-2 px-3.5 py-2.5 bg-white border border-neutral-200/90 text-neutral-800 hover:bg-neutral-50 active:scale-95 rounded-2xl text-xs font-semibold shadow-2xs transition-all"
-              aria-label="Buscar amigos por nombre"
-            >
-              <Search className="w-3.5 h-3.5 text-emerald-700 stroke-[2.5]" />
-              <span>Buscar amigo</span>
-            </button>
-          </div>
-        </div>
-
-        {/* BANNER PARA ACTIVAR NOTIFICACIONES PUSH MÓVILES */}
-        {pushPermission !== 'granted' && isPushSupported() && (
-          <div className="bg-gradient-to-r from-emerald-950 to-neutral-900 text-white p-3.5 rounded-2xl flex items-center justify-between gap-3 shadow-sm animate-in fade-in duration-300 border border-emerald-800/40">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-xl bg-emerald-800 text-emerald-300 flex items-center justify-center shrink-0">
-                <BellRing className="w-4 h-4 animate-bounce" />
-              </div>
-              <div className="flex flex-col min-w-0">
-                <span className="text-xs font-bold leading-tight">Activar Avisos en el Móvil</span>
-                <span className="text-[10px] text-emerald-200 truncate">
-                  Para enterarte de mensajes y alertas SOS al instante
-                </span>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handleActivatePushNotification}
-              className="px-3 py-1.5 bg-emerald-400 hover:bg-emerald-300 text-emerald-950 font-bold text-xs rounded-xl shrink-0 shadow-xs active:scale-95 transition-transform"
-            >
-              Activar
-            </button>
+        {/* TOAST DE FEEDBACK */}
+        {toastMessage && (
+          <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-xs bg-[#16241C]/95 border border-[rgba(232,183,94,0.25)] text-[#F1EEE2] text-xs py-3 px-4 rounded-2xl shadow-xl flex items-center gap-2.5 backdrop-blur-md animate-in fade-in slide-in-from-top-3">
+            <span className="text-[#E8B75E] text-sm shrink-0">✨</span>
+            <span className="font-medium leading-tight">{toastMessage}</span>
           </div>
         )}
 
-        {/* PESTAÑAS SEGMENTADAS MÓVILES (AMIGOS VS SOLICITUDES) */}
-        <div className="flex bg-neutral-200/60 p-1 rounded-2xl gap-1">
+        {/* =================================================================== */}
+        {/* 1. CABECERA                                                         */}
+        {/* =================================================================== */}
+        <header className="pt-[22px] px-[24px] pb-0 relative z-10 flex items-start justify-between">
+          <div className="flex items-baseline gap-[9px]">
+            <h1 className="font-fraunces font-medium text-[22px] text-[#F1EEE2] tracking-tight">
+              Comunidad
+            </h1>
+            <span className="text-[12.5px] text-[#7C9481]">
+              {friendsList.length} conexiones
+            </span>
+          </div>
+
+          <div className="flex gap-[8px]">
+            {/* Botón Buscar */}
+            <button
+              type="button"
+              onClick={() => setShowSearchModal(true)}
+              className="w-[34px] h-[34px] rounded-full border border-[rgba(232,183,94,0.16)] bg-[rgba(255,255,255,0.02)] flex items-center justify-center text-[14px] text-[#A9BBA4] hover:text-[#E8B75E] hover:border-[rgba(232,183,94,0.35)] transition-all cursor-pointer"
+              title="Buscar compañeros"
+              aria-label="Buscar amigos"
+            >
+              🔍
+            </button>
+
+            {/* Botón Notificaciones con ping */}
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== 'undefined') {
+                  localStorage.setItem('last_read_notifications_at', new Date().toISOString())
+                  window.dispatchEvent(new Event('notifications_read'))
+                }
+                setUnreadNotificationsCount(0)
+                router.push('/dashboard/notifications')
+              }}
+              className="w-[34px] h-[34px] rounded-full border border-[rgba(232,183,94,0.16)] bg-[rgba(255,255,255,0.02)] flex items-center justify-center text-[14px] text-[#A9BBA4] hover:text-[#E8B75E] hover:border-[rgba(232,183,94,0.35)] transition-all cursor-pointer relative"
+              title="Notificaciones"
+              aria-label="Ver notificaciones"
+            >
+              🔔
+              {unreadNotificationsCount > 0 && (
+                <span className="absolute -top-[2px] -right-[2px] w-[15px] h-[15px] rounded-full bg-[#E8547C] text-white text-[9px] font-bold flex items-center justify-center border-2 border-[#16241C]">
+                  {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
+                </span>
+              )}
+            </button>
+          </div>
+        </header>
+
+        {/* =================================================================== */}
+        {/* 2. CONTROL SEGMENTADO (MIS AMIGOS / SOLICITUDES)                    */}
+        {/* =================================================================== */}
+        <div className="mx-[24px] mt-[20px] mb-0 flex bg-[rgba(255,255,255,0.03)] border border-[rgba(232,183,94,0.1)] rounded-[100px] p-[4px] relative z-10">
           <button
             type="button"
             onClick={() => setCurrentTab('friends')}
-            className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 ${
+            className={`flex-1 text-center text-[13px] font-semibold py-[9px] px-0 rounded-[100px] flex items-center justify-center gap-[6px] transition-all cursor-pointer ${
               currentTab === 'friends'
-                ? 'bg-white shadow-xs text-neutral-950'
-                : 'text-neutral-500 hover:text-neutral-800'
+                ? 'bg-[rgba(232,183,94,0.12)] text-[#E8B75E]'
+                : 'text-[#7C9481] hover:text-[#F1EEE2]'
             }`}
           >
-            <Users className="w-3.5 h-3.5" />
-            <span>Mis Amigos ({friendsList.length})</span>
+            <span>Mis amigos</span>
+            <span className="opacity-75 font-normal">({friendsList.length})</span>
           </button>
 
           <button
             type="button"
             onClick={() => setCurrentTab('requests')}
-            className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 relative ${
+            className={`flex-1 text-center text-[13px] font-semibold py-[9px] px-0 rounded-[100px] flex items-center justify-center gap-[6px] transition-all cursor-pointer ${
               currentTab === 'requests'
-                ? 'bg-white shadow-xs text-neutral-950'
-                : 'text-neutral-500 hover:text-neutral-800'
+                ? 'bg-[rgba(232,183,94,0.12)] text-[#E8B75E]'
+                : 'text-[#7C9481] hover:text-[#F1EEE2]'
             }`}
           >
-            <UserPlus className="w-3.5 h-3.5" />
             <span>Solicitudes</span>
-            {totalPendingCount > 0 && (
-              <span className="w-5 h-5 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center animate-pulse">
-                {totalPendingCount}
+            {pendingReceived.length > 0 && (
+              <span className="bg-[#E8547C] text-white text-[10px] font-bold min-w-[16px] h-[16px] px-1 rounded-full flex items-center justify-center">
+                {pendingReceived.length}
               </span>
             )}
           </button>
         </div>
 
-        {/* ======================================================== */}
-        {/* PESTAÑA 1: LISTADO DE AMIGOS ACTIVOS */}
-        {/* ======================================================== */}
-        {currentTab === 'friends' && (
-          <div className="bg-white border border-neutral-100 rounded-3xl p-5 shadow-xs flex-1 flex flex-col justify-between space-y-6">
-            <div className="space-y-6">
-              
+        {/* =================================================================== */}
+        {/* 3. CONTENIDO PRINCIPAL                                              */}
+        {/* =================================================================== */}
+        <div className="flex-1 pt-[22px] px-[24px] pb-[4px] relative z-10 overflow-y-auto no-scrollbar">
+          {currentTab === 'friends' ? (
+            <>
               {/* SECCIÓN 1: DEJANDO DE FUMAR */}
-              <section className="space-y-3">
-                <div className="border-b border-neutral-100 pb-2 flex items-center justify-between">
-                  <h2 className="text-xs font-bold text-emerald-900 uppercase tracking-wider">
-                    Dejando de fumar ({quittingFriends.length})
-                  </h2>
-                  <span className="text-[10px] text-neutral-400 font-medium">
-                    Toca para chatear
-                  </span>
-                </div>
-
-                {quittingFriends.length === 0 ? (
-                  <div className="text-center py-6 space-y-2">
-                    <p className="text-xs text-neutral-400">No tienes amigos en proceso aún.</p>
+              {quittingFriends.length > 0 && (
+                <>
+                  <div className="flex items-baseline justify-between mb-[12px]">
+                    <span className="font-fraunces italic text-[14px] text-[#A9BBA4]">
+                      Dejando de fumar
+                    </span>
+                    <span className="text-[11px] text-[#7C9481]">Toca para chatear</span>
                   </div>
-                ) : (
-                  <div className="space-y-3.5 pt-1">
+
+                  <div className="flex flex-col gap-[10px] mb-[26px]">
                     {quittingFriends.map((friend, idx) => {
+                      const gradientClass = getAvatarGradientClass(idx)
                       const unread = unreadCounts[friend.id] || 0
 
                       return (
                         <div
-                          key={friend.friendshipId ? `friend-${friend.id}-${friend.friendshipId}` : `friend-${friend.id}-${idx}`}
-                          className="flex items-center justify-between group py-1 bg-neutral-50/50 hover:bg-neutral-50 rounded-2xl px-2.5 transition-colors"
+                          key={friend.id}
+                          className="rounded-[20px] border border-[rgba(232,183,94,0.1)] p-[13px] flex items-center gap-[12px] transition-all hover:border-[rgba(232,183,94,0.25)]"
+                          style={{
+                            background:
+                              'linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.01))',
+                          }}
                         >
+                          {/* Avatar con punto de status verde */}
                           <div
                             onClick={() => handleOpenChat(friend)}
-                            className="flex items-center gap-3 flex-1 cursor-pointer min-w-0"
+                            className="w-[42px] h-[42px] rounded-full flex items-center justify-center text-[13.5px] font-semibold shrink-0 relative text-[#1B1710] cursor-pointer"
+                            style={{
+                              background:
+                                gradientClass === 'c1'
+                                  ? 'linear-gradient(145deg, #9FC98A, #6FA65C)'
+                                  : gradientClass === 'c2'
+                                  ? 'linear-gradient(145deg, #C9BCEF, #A796D8)'
+                                  : 'linear-gradient(145deg, #F0D08C, #E8B75E)',
+                            }}
                           >
-                            {/* Avatar con iniciales */}
-                            <div className="relative shrink-0">
-                              <div
-                                className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold tracking-wider ${friend.avatarBg} ${friend.avatarText}`}
-                              >
-                                {friend.initials}
-                              </div>
-                              <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-white rounded-full" />
-                            </div>
+                            {friend.initials}
+                            <span className="absolute -right-[1px] -bottom-[1px] w-[10px] h-[10px] rounded-full bg-[#6FCB8A] border-2 border-[#16241C]" />
+                          </div>
 
-                            {/* Nombre, Estado y Badge de No Leídos */}
-                            <div className="flex flex-col min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-sm font-semibold text-neutral-950 leading-tight truncate">
-                                  {friend.name}
-                                </span>
-                                {unread > 0 && (
-                                  <span className="px-1.5 py-0.5 bg-rose-600 text-white text-[9px] font-black rounded-full shadow-xs animate-pulse">
-                                    {unread} {unread === 1 ? 'nuevo' : 'nuevos'}
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-[11px] text-neutral-400 font-normal mt-0.5 truncate">
-                                {friend.status}
-                              </span>
+                          {/* Info del amigo */}
+                          <div
+                            onClick={() => handleOpenChat(friend)}
+                            className="flex-1 min-w-0 cursor-pointer"
+                          >
+                            <div className="text-[14.5px] font-semibold text-[#F1EEE2] truncate">
+                              {friend.name}
+                            </div>
+                            <div className="text-[12px] text-[#E8B75E] mt-[1px] truncate">
+                              {friend.status}
                             </div>
                           </div>
 
-                          {/* Botones de acción directos */}
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {/* Botón Ver Jardín */}
-                            <button
-                              type="button"
-                              onClick={() => router.push(`/dashboard/plant?friendId=${friend.id}`)}
-                              className="w-8 h-8 rounded-full bg-emerald-50/80 border border-emerald-200/60 text-emerald-800 hover:bg-emerald-100 flex items-center justify-center transition-all active:scale-90"
-                              title={`Ver jardín de ${friend.name}`}
-                            >
-                              <Sprout className="w-3.5 h-3.5 stroke-[2.2]" />
-                            </button>
-
-                            {/* Botón de Chat con badge rojo */}
-                            <button
-                              type="button"
-                              onClick={() => handleOpenChat(friend)}
-                              className="relative w-8 h-8 rounded-full bg-white border border-neutral-200 text-neutral-600 hover:text-emerald-700 hover:border-emerald-300 flex items-center justify-center transition-all active:scale-90"
-                              title={`Chatear con ${friend.name}`}
-                            >
-                              <MessageCircle className="w-3.5 h-3.5 stroke-[2.2]" />
-                              {unread > 0 && (
-                                <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-600 text-white text-[9px] font-black rounded-full flex items-center justify-center border border-white shadow-xs">
-                                  {unread}
-                                </span>
-                              )}
-                            </button>
-
-                            {/* Botón de Riego */}
+                          {/* Acciones: Regar y Chatear */}
+                          <div className="flex items-center gap-[7px] shrink-0">
                             <button
                               type="button"
                               onClick={() => handleToggleWater(friend)}
-                              className="w-8 h-8 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-700 hover:bg-emerald-100 flex items-center justify-center transition-all active:scale-90"
-                              title={`Regar planta de ${friend.name}`}
+                              className="w-[32px] h-[32px] rounded-full bg-[rgba(232,183,94,0.07)] border border-[rgba(232,183,94,0.14)] flex items-center justify-center text-[13px] text-[#E8B75E] hover:bg-[rgba(232,183,94,0.18)] transition-all cursor-pointer active:scale-95"
+                              title="Regar su planta"
+                              aria-label="Regar planta"
                             >
-                              <Droplets className="w-3.5 h-3.5 fill-emerald-600/20 stroke-[2.2]" />
-                            </button>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </section>
-
-              {/* SECCIÓN 2: GUARDIANES (APOYANDO) */}
-              <section className="space-y-3 pt-1">
-                <div className="border-b border-neutral-100 pb-2 flex items-center justify-between">
-                  <h2 className="text-xs font-bold text-neutral-500 uppercase tracking-wider">
-                    Guardianes de apoyo ({supportingFriends.length})
-                  </h2>
-                </div>
-
-                {supportingFriends.length === 0 ? (
-                  <div className="text-center py-4 space-y-1">
-                    <p className="text-xs text-neutral-400">Sin guardianes por ahora.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3.5 pt-1">
-                    {supportingFriends.map((supporter, idx) => {
-                      const unread = unreadCounts[supporter.id] || 0
-
-                      return (
-                        <div
-                          key={supporter.friendshipId ? `supporter-${supporter.id}-${supporter.friendshipId}` : `supporter-${supporter.id}-${idx}`}
-                          className="flex items-center justify-between group py-1 bg-neutral-50/50 hover:bg-neutral-50 rounded-2xl px-2.5 transition-colors"
-                        >
-                          <div
-                            onClick={() => handleOpenChat(supporter)}
-                            className="flex items-center gap-3 flex-1 cursor-pointer min-w-0"
-                          >
-                            <div
-                              className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold tracking-wider ${supporter.avatarBg} ${supporter.avatarText} shrink-0`}
-                            >
-                              {supporter.initials}
-                            </div>
-
-                            <div className="flex flex-col min-w-0">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-sm font-semibold text-neutral-950 leading-tight truncate">
-                                  {supporter.name}
-                                </span>
-                                {unread > 0 && (
-                                  <span className="px-1.5 py-0.5 bg-rose-600 text-white text-[9px] font-black rounded-full shadow-xs animate-pulse">
-                                    {unread} {unread === 1 ? 'nuevo' : 'nuevos'}
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-[11px] text-neutral-400 font-normal mt-0.5 truncate">
-                                {supporter.status}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {/* Botón Ver Jardín */}
-                            <button
-                              type="button"
-                              onClick={() => router.push(`/dashboard/plant?friendId=${supporter.id}`)}
-                              className="w-8 h-8 rounded-full bg-sky-50/80 border border-sky-200/60 text-sky-800 hover:bg-sky-100 flex items-center justify-center transition-all active:scale-90"
-                              title={`Ver jardín de ${supporter.name}`}
-                            >
-                              <Sprout className="w-3.5 h-3.5 stroke-[2.2]" />
+                              💧
                             </button>
 
                             <button
                               type="button"
-                              onClick={() => handleOpenChat(supporter)}
-                              className="relative w-8 h-8 rounded-full bg-white border border-neutral-200 text-neutral-600 hover:text-sky-700 hover:border-sky-300 flex items-center justify-center transition-all active:scale-90"
-                              title={`Chatear con ${supporter.name}`}
+                              onClick={() => handleOpenChat(friend)}
+                              className="w-[32px] h-[32px] rounded-full bg-[rgba(232,183,94,0.07)] border border-[rgba(232,183,94,0.14)] flex items-center justify-center text-[13px] text-[#E8B75E] hover:bg-[rgba(232,183,94,0.18)] transition-all cursor-pointer relative active:scale-95"
+                              title="Chatear"
+                              aria-label="Abrir chat"
                             >
-                              <MessageCircle className="w-3.5 h-3.5 stroke-[2.2]" />
+                              💬
                               {unread > 0 && (
-                                <span className="absolute -top-1 -right-1 w-4 h-4 bg-rose-600 text-white text-[9px] font-black rounded-full flex items-center justify-center border border-white shadow-xs">
+                                <span className="absolute -top-[4px] -right-[4px] min-w-[15px] h-[15px] px-[3px] rounded-full bg-[#E8547C] text-white text-[9.5px] font-bold flex items-center justify-center border-2 border-[#16241C]">
                                   {unread}
                                 </span>
                               )}
                             </button>
-
-                            <span className="text-[10px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/70 px-2 py-0.5 rounded-full">
-                              Guardián
-                            </span>
                           </div>
                         </div>
                       )
                     })}
                   </div>
-                )}
-              </section>
-            </div>
+                </>
+              )}
 
-            {/* BOTÓN INFERIOR: BUSCAR NUEVOS AMIGOS */}
-            <div className="pt-4 border-t border-neutral-100">
+              {/* SECCIÓN 2: GUARDIANES DE APOYO */}
+              {supportingFriends.length > 0 && (
+                <>
+                  <div className="flex items-baseline justify-between mb-[12px]">
+                    <span className="font-fraunces italic text-[14px] text-[#A9BBA4]">
+                      Guardianes de apoyo
+                    </span>
+                    <span className="text-[11px] text-[#7C9481]">
+                      {supportingFriends.length}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col gap-[10px] mb-[26px]">
+                    {supportingFriends.map((friend, idx) => {
+                      const gradientClass = getAvatarGradientClass(idx + 1)
+                      const unread = unreadCounts[friend.id] || 0
+
+                      return (
+                        <div
+                          key={friend.id}
+                          className="rounded-[20px] border border-[rgba(232,183,94,0.1)] p-[13px] flex items-center gap-[12px] transition-all hover:border-[rgba(232,183,94,0.25)]"
+                          style={{
+                            background:
+                              'linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.01))',
+                          }}
+                        >
+                          {/* Avatar sin status dot */}
+                          <div
+                            onClick={() => handleOpenChat(friend)}
+                            className="w-[42px] h-[42px] rounded-full flex items-center justify-center text-[13.5px] font-semibold shrink-0 text-[#1B1710] cursor-pointer"
+                            style={{
+                              background:
+                                gradientClass === 'c1'
+                                  ? 'linear-gradient(145deg, #9FC98A, #6FA65C)'
+                                  : gradientClass === 'c2'
+                                  ? 'linear-gradient(145deg, #C9BCEF, #A796D8)'
+                                  : 'linear-gradient(145deg, #F0D08C, #E8B75E)',
+                            }}
+                          >
+                            {friend.initials}
+                          </div>
+
+                          {/* Info con Role Pill */}
+                          <div
+                            onClick={() => handleOpenChat(friend)}
+                            className="flex-1 min-w-0 cursor-pointer"
+                          >
+                            <div className="flex items-center gap-[7px]">
+                              <div className="text-[14.5px] font-semibold text-[#F1EEE2] truncate">
+                                {friend.name}
+                              </div>
+                            </div>
+                            <span className="inline-block mt-[3px] text-[10px] font-semibold text-[#A796D8] border border-[rgba(167,150,216,0.35)] bg-[rgba(167,150,216,0.08)] py-[2px] px-[8px] rounded-[100px] whitespace-nowrap">
+                              Guardián
+                            </span>
+                          </div>
+
+                          {/* Acciones */}
+                          <div className="flex items-center gap-[7px] shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleWater(friend)}
+                              className="w-[32px] h-[32px] rounded-full bg-[rgba(232,183,94,0.07)] border border-[rgba(232,183,94,0.14)] flex items-center justify-center text-[13px] text-[#E8B75E] hover:bg-[rgba(232,183,94,0.18)] transition-all cursor-pointer active:scale-95"
+                              title="Enviar apoyo"
+                              aria-label="Enviar apoyo"
+                            >
+                              💧
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleOpenChat(friend)}
+                              className="w-[32px] h-[32px] rounded-full bg-[rgba(232,183,94,0.07)] border border-[rgba(232,183,94,0.14)] flex items-center justify-center text-[13px] text-[#E8B75E] hover:bg-[rgba(232,183,94,0.18)] transition-all cursor-pointer relative active:scale-95"
+                              title="Chatear"
+                              aria-label="Abrir chat"
+                            >
+                              💬
+                              {unread > 0 && (
+                                <span className="absolute -top-[4px] -right-[4px] min-w-[15px] h-[15px] px-[3px] rounded-full bg-[#E8547C] text-white text-[9.5px] font-bold flex items-center justify-center border-2 border-[#16241C]">
+                                  {unread}
+                                </span>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+
+              {/* BOTÓN: BUSCAR AMIGOS POR NOMBRE */}
+              <button
+                type="button"
+                onClick={() => setShowSearchModal(true)}
+                className="w-full bg-transparent border border-[rgba(232,183,94,0.26)] text-[#E8B75E] p-[14px] rounded-[16px] font-semibold text-[14px] flex items-center justify-center gap-[8px] mb-[18px] hover:bg-[rgba(232,183,94,0.08)] transition-all cursor-pointer"
+              >
+                ＋ Buscar amigos por nombre
+              </button>
+            </>
+          ) : (
+            /* =============================================================== */
+            /* PESTAÑA: SOLICITUDES PENDIENTES & CÓDIGO                         */
+            /* =============================================================== */
+            <div className="space-y-4">
+              {/* Tarjeta de Código Personal para Compartir */}
+              <div
+                className="rounded-[20px] p-[16px] border border-[rgba(232,183,94,0.15)] text-center space-y-2"
+                style={{
+                  background:
+                    'linear-gradient(180deg, rgba(232,183,94,0.06), rgba(255,255,255,0.01))',
+                }}
+              >
+                <span className="text-[11px] font-medium text-[#7C9481]">
+                  Tu identificador para recibir solicitudes
+                </span>
+                <div className="font-mono text-[13px] text-[#E8B75E] bg-black/20 py-2 px-3 rounded-xl border border-[rgba(232,183,94,0.12)] select-all break-all">
+                  {userId}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (navigator?.clipboard && userId) {
+                      navigator.clipboard.writeText(userId)
+                      setCopiedCode(true)
+                      showToast('Identificador copiado al portapapeles 📋')
+                      setTimeout(() => setCopiedCode(false), 2000)
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 text-xs text-[#E8B75E] hover:underline pt-1 cursor-pointer font-medium"
+                >
+                  {copiedCode ? <CheckCheck className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedCode ? '¡Copiado!' : 'Copiar mi ID'}</span>
+                </button>
+              </div>
+
+              {/* Solicitudes Recibidas */}
+              <div>
+                <div className="flex items-baseline justify-between mb-[10px]">
+                  <span className="font-fraunces italic text-[14px] text-[#A9BBA4]">
+                    Solicitudes recibidas
+                  </span>
+                  <span className="text-[11px] text-[#7C9481]">
+                    {pendingReceived.length}
+                  </span>
+                </div>
+
+                {pendingReceived.length === 0 ? (
+                  <div className="text-center py-6 text-xs text-[#7C9481]">
+                    No tienes solicitudes pendientes por responder
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-[10px]">
+                    {pendingReceived.map((req) => (
+                      <div
+                        key={req.id}
+                        className="rounded-[20px] border border-[rgba(232,183,94,0.14)] p-[13px] flex items-center justify-between gap-2"
+                        style={{
+                          background:
+                            'linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.01))',
+                        }}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="w-[38px] h-[38px] rounded-full bg-gradient-to-tr from-[#9FC98A] to-[#6FA65C] text-[#1B1710] font-bold text-xs flex items-center justify-center shrink-0">
+                            {req.initials}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="text-[14px] font-semibold text-[#F1EEE2] truncate">
+                              {req.name}
+                            </div>
+                            <div className="text-[11px] text-[#7C9481]">
+                              {req.role === 'friend' ? 'Guardián' : 'Fumador en proceso'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleAcceptRequest(req)}
+                            disabled={processingId === req.id}
+                            className="w-[32px] h-[32px] rounded-full bg-[#E8B75E] text-[#1B1710] font-bold flex items-center justify-center hover:bg-[#E8B75E]/90 transition-all cursor-pointer active:scale-95"
+                            title="Aceptar"
+                          >
+                            ✓
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRejectRequest(req.id, true)}
+                            disabled={processingId === req.id}
+                            className="w-[32px] h-[32px] rounded-full bg-white/10 text-[#A9BBA4] hover:text-white flex items-center justify-center transition-all cursor-pointer active:scale-95"
+                            title="Rechazar"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Solicitudes Enviadas */}
+              {pendingSent.length > 0 && (
+                <div className="pt-2">
+                  <div className="flex items-baseline justify-between mb-[10px]">
+                    <span className="font-fraunces italic text-[14px] text-[#A9BBA4]">
+                      Enviadas esperando respuesta
+                    </span>
+                    <span className="text-[11px] text-[#7C9481]">
+                      {pendingSent.length}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col gap-[8px]">
+                    {pendingSent.map((req) => (
+                      <div
+                        key={req.id}
+                        className="rounded-[18px] border border-[rgba(232,183,94,0.08)] p-[12px] flex items-center justify-between text-xs text-[#7C9481]"
+                        style={{ background: 'rgba(255,255,255,0.02)' }}
+                      >
+                        <span className="font-medium text-[#F1EEE2]">{req.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRejectRequest(req.id, false)}
+                          className="text-[#E8547C] hover:underline"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          <div className="h-8 shrink-0 pointer-events-none" />
+        </div>
+
+        {/* =================================================================== */}
+        {/* 4. BOTÓN FLOTANTE SOS (SOS FAB)                                     */}
+        {/* =================================================================== */}
+        <button
+          type="button"
+          onClick={handleTriggerSOS}
+          aria-label="Activar alerta SOS"
+          className="fixed bottom-[64px] right-[max(16px,calc(50%-175px))] w-[46px] h-[46px] rounded-full flex items-center justify-center text-[18px] z-50 cursor-pointer shadow-[0_8px_24px_rgba(0,0,0,0.45)] transition-transform hover:scale-105 active:scale-90"
+          style={{
+            background: 'rgba(232, 84, 124, 0.14)',
+            backdropFilter: 'blur(8px)',
+            border: '1px solid rgba(232, 84, 124, 0.45)',
+            color: '#E8547C',
+          }}
+        >
+          ♥
+          {/* Anillo de pulso continuo */}
+          <span className="absolute -inset-[5px] rounded-full border-[1.5px] border-[rgba(232,84,124,0.28)] animate-pulse-ring pointer-events-none" />
+        </button>
+
+        {/* =================================================================== */}
+        {/* 5. BARRA DE NAVEGACIÓN INFERIOR (BOTTOM BAR)                        */}
+        {/* =================================================================== */}
+        {/* 5. BARRA DE NAVEGACIÓN INFERIOR (3 MENÚS)                           */}
+        {/* =================================================================== */}
+        <BottomNav currentTab="friends" unreadFriendsCount={totalUnreadMessages} />
+      </div>
+
+      {/* =================================================================== */}
+      {/* 6. MODAL DE BÚSQUEDA POR NOMBRE / IDENTIFICADOR                     */}
+      {/* =================================================================== */}
+      {showSearchModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-sm rounded-[28px] p-6 space-y-4 border border-[rgba(232,183,94,0.2)] relative"
+            style={{
+              background: 'linear-gradient(180deg, #1C2E24, #121D16)',
+              color: '#F1EEE2',
+            }}
+          >
+            <div className="flex justify-between items-start">
+              <div>
+                <h3 className="font-fraunces text-lg font-medium text-[#F1EEE2]">
+                  Buscar compañeros
+                </h3>
+                <p className="text-xs text-[#7C9481]">
+                  Escribe el nombre de un amigo o pega su ID
+                </p>
+              </div>
+
               <button
                 type="button"
                 onClick={() => {
-                  setShowSearchModal(true)
+                  setShowSearchModal(false)
                   setSearchQuery('')
                   setSearchResults([])
                 }}
-                className="w-full h-12 bg-neutral-950 hover:bg-neutral-900 text-white font-medium text-xs rounded-2xl flex items-center justify-center gap-2 transition-transform active:scale-[0.98] shadow-xs"
-              >
-                <UserPlus className="w-4 h-4 text-emerald-400" />
-                <span>Buscar y añadir amigos por nombre</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* PESTAÑA 2: SOLICITUDES DE AMISTAD (RECIBIDAS Y ENVIADAS) */}
-        {/* ======================================================== */}
-        {currentTab === 'requests' && (
-          <div className="bg-white border border-neutral-100 rounded-3xl p-5 shadow-xs flex-1 flex flex-col space-y-6">
-            
-            {/* SOLICITUDES RECIBIDAS */}
-            <section className="space-y-3">
-              <div className="border-b border-neutral-100 pb-2 flex items-center justify-between">
-                <h2 className="text-xs font-bold text-neutral-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <span>Solicitudes pendientes</span>
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                </h2>
-                <span className="text-xs text-neutral-400 font-semibold">
-                  {pendingReceived.length}
-                </span>
-              </div>
-
-              {pendingReceived.length === 0 ? (
-                <div className="text-center py-8 space-y-2.5">
-                  <div className="w-12 h-12 rounded-2xl bg-neutral-50 border border-neutral-100 flex items-center justify-center mx-auto text-neutral-400">
-                    <HeartHandshake className="w-6 h-6 stroke-[1.5]" />
-                  </div>
-                  <p className="text-xs text-neutral-500 font-medium">
-                    No tienes solicitudes pendientes en este momento.
-                  </p>
-                  <p className="text-[11px] text-neutral-400 max-w-[220px] mx-auto leading-relaxed">
-                    Usa la búsqueda por nombre para encontrar y conectar con tus amigos.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-3 pt-1">
-                  {pendingReceived.map((req, idx) => (
-                    <div
-                      key={`received-${req.id}-${req.requesterId}-${idx}`}
-                      className="bg-[#F8FAF9] border border-neutral-200/80 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in duration-200"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={`w-11 h-11 rounded-full flex items-center justify-center text-xs font-bold ${req.avatarBg} ${req.avatarText} shrink-0 shadow-2xs`}
-                        >
-                          {req.initials}
-                        </div>
-
-                        <div className="flex flex-col">
-                          <span className="text-sm font-bold text-neutral-950">
-                            {req.name}
-                          </span>
-                          <span className="text-[11px] text-neutral-500">
-                            Quiere unirse a tu círculo de apoyo
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* BOTONES TÁCTILES GRANDES: ACEPTAR Y RECHAZAR */}
-                      <div className="flex items-center gap-2 self-end sm:self-center w-full sm:w-auto">
-                        <button
-                          type="button"
-                          onClick={() => handleAcceptRequest(req)}
-                          disabled={processingId === req.id}
-                          className="flex-1 sm:flex-initial h-10 px-4 bg-neutral-950 hover:bg-neutral-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-transform active:scale-95 shadow-xs"
-                        >
-                          {processingId === req.id ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <>
-                              <Check className="w-3.5 h-3.5 stroke-[3] text-emerald-400" />
-                              <span>Aceptar</span>
-                            </>
-                          )}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleRejectRequest(req.id, true)}
-                          disabled={processingId === req.id}
-                          className="h-10 px-3.5 bg-white border border-neutral-200 text-neutral-600 hover:text-red-700 hover:border-red-200 rounded-xl text-xs font-semibold flex items-center justify-center transition-colors active:scale-95"
-                          title="Rechazar solicitud"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {/* SOLICITUDES ENVIADAS (ESPERANDO RESPUESTA) */}
-            {pendingSent.length > 0 && (
-              <section className="space-y-3 pt-2">
-                <div className="border-b border-neutral-100 pb-2 flex items-center justify-between">
-                  <h2 className="text-xs font-bold text-neutral-400 uppercase tracking-wider">
-                    Enviadas por ti ({pendingSent.length})
-                  </h2>
-                </div>
-
-                <div className="space-y-2.5">
-                  {pendingSent.map((sentReq, idx) => (
-                    <div
-                      key={`sent-${sentReq.id}-${sentReq.requesterId}-${idx}`}
-                      className="flex items-center justify-between p-3 rounded-2xl bg-neutral-50/70 border border-neutral-100"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold ${sentReq.avatarBg} ${sentReq.avatarText}`}
-                        >
-                          {sentReq.initials}
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-xs font-semibold text-neutral-800">
-                            {sentReq.name}
-                          </span>
-                          <span className="text-[10px] text-amber-700 font-medium flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            Esperando confirmación
-                          </span>
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => handleRejectRequest(sentReq.id, false)}
-                        className="text-[11px] text-neutral-400 hover:text-neutral-700 font-medium px-2.5 py-1 rounded-lg hover:bg-neutral-100"
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
-          </div>
-        )}
-      </main>
-
-      {/* ======================================================== */}
-      {/* MODAL DE BÚSQUEDA POR NOMBRE DE USUARIO */}
-      {/* ======================================================== */}
-      {showSearchModal && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-md bg-white sm:rounded-3xl rounded-t-3xl h-[85dvh] sm:h-[580px] flex flex-col p-6 space-y-4 shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-300 border border-neutral-200/80">
-            
-            {/* Cabecera del modal */}
-            <div className="flex justify-between items-start">
-              <div>
-                <h3 className="text-base font-bold text-neutral-950">
-                  Buscar Amigos
-                </h3>
-                <p className="text-xs text-neutral-500 mt-0.5">
-                  Escribe el nombre o apodo de tu amigo para conectar.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowSearchModal(false)}
-                className="w-8 h-8 rounded-full bg-neutral-100 flex items-center justify-center text-neutral-400 hover:text-neutral-700 transition-colors active:scale-95"
+                className="w-8 h-8 rounded-full bg-white/10 text-[#A9BBA4] hover:text-white flex items-center justify-center transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Input de Búsqueda Directa */}
+            {/* Input de Búsqueda */}
             <div className="relative">
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Ej. Uri, María, David..."
+                placeholder="Nombre o ID..."
+                className="w-full py-3 pl-10 pr-4 bg-black/30 border border-[rgba(232,183,94,0.2)] rounded-2xl text-xs text-[#F1EEE2] placeholder-[#7C9481] focus:outline-none focus:border-[#E8B75E] transition-colors"
                 autoFocus
-                className="w-full h-12 pl-11 pr-10 bg-[#F8FAF9] border border-neutral-200 rounded-2xl text-sm text-neutral-950 placeholder:text-neutral-400 focus:outline-none focus:border-emerald-700 transition-colors shadow-2xs font-medium"
               />
-              <Search className="w-4 h-4 text-neutral-400 absolute left-4 top-1/2 -translate-y-1/2" />
-              {searchQuery && (
-                <button
-                  type="button"
-                  onClick={() => setSearchQuery('')}
-                  className="w-6 h-6 rounded-full bg-neutral-200/70 text-neutral-600 flex items-center justify-center absolute right-3.5 top-1/2 -translate-y-1/2 hover:bg-neutral-300"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              )}
+              <Search className="w-4 h-4 text-[#7C9481] absolute left-3.5 top-3.5" />
             </div>
 
-            {/* Lista de Resultados de Búsqueda */}
-            <div className="flex-1 overflow-y-auto space-y-2.5 pr-0.5">
+            {/* Resultados */}
+            <div className="max-h-56 overflow-y-auto space-y-2 no-scrollbar">
               {isSearching ? (
-                <div className="flex flex-col items-center justify-center py-12 space-y-2">
-                  <Loader2 className="w-6 h-6 text-emerald-600 animate-spin" />
-                  <p className="text-xs text-neutral-400">Buscando usuarios...</p>
+                <div className="flex items-center justify-center py-6 text-xs text-[#7C9481] gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-[#E8B75E]" />
+                  <span>Buscando en la comunidad...</span>
                 </div>
-              ) : !searchQuery.trim() ? (
-                <div className="text-center py-12 space-y-3">
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center mx-auto">
-                    <Search className="w-6 h-6" />
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs font-semibold text-neutral-800">
-                      Encuentra a tus amigos fácilmente
-                    </p>
-                    <p className="text-[11px] text-neutral-400 max-w-xs mx-auto leading-relaxed">
-                      Escribe al menos dos letras del nombre de tu amigo para ver sugerencias y enviar una invitación directa.
-                    </p>
-                  </div>
-                </div>
-              ) : searchResults.length === 0 ? (
-                <div className="text-center py-10 space-y-2">
-                  <p className="text-xs font-semibold text-neutral-700">
-                    No se encontraron usuarios con &quot;{searchQuery}&quot;
-                  </p>
-                  <p className="text-[11px] text-neutral-400">
-                    Comprueba que el nombre esté bien escrito o invita a tu amigo a registrarse.
-                  </p>
-                </div>
-              ) : (
-                searchResults.map((userItem, idx) => {
-                  const name = userItem.full_name || 'Usuario Exhala'
-                  const initials = getInitials(name)
-                  const color = getAvatarColor(name)
-                  const isAlreadyFriend = friendsList.some((f) => f.id === userItem.id)
-                  const isSent = sentRequestMap[userItem.id] || pendingSent.some((s) => s.requesterId === userItem.id)
-                  const isProcessing = processingId === userItem.id
+              ) : searchResults.length > 0 ? (
+                searchResults.map((user) => {
+                  const isSent = sentRequestMap[user.id]
+                  const alreadyFriend = friendsList.some((f) => f.id === user.id)
 
                   return (
                     <div
-                      key={`search-${userItem.id}-${idx}`}
-                      className="p-3 bg-[#F8FAF9] hover:bg-neutral-100/70 border border-neutral-200/70 rounded-2xl flex items-center justify-between gap-3 transition-colors"
+                      key={user.id}
+                      className="p-3 bg-black/20 border border-[rgba(232,183,94,0.1)] rounded-2xl flex items-center justify-between gap-2"
                     >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div
-                          className={`w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold ${color.bg} ${color.text} shrink-0`}
-                        >
-                          {initials}
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-[#F1EEE2] truncate">
+                          {user.full_name || 'Usuario'}
                         </div>
-                        <div className="flex flex-col min-w-0">
-                          <span className="text-sm font-bold text-neutral-950 truncate">
-                            {name}
-                          </span>
-                          <span className="text-[11px] text-neutral-400 truncate">
-                            {userItem.role === 'friend' ? 'Guardián' : 'Fumador en proceso'}
-                          </span>
+                        <div className="text-[10px] text-[#7C9481]">
+                          {user.role === 'friend' ? 'Guardián' : 'Fumador'}
                         </div>
                       </div>
 
-                      {/* Botón de acción */}
-                      <div className="shrink-0">
-                        {isAlreadyFriend ? (
-                          <span className="px-3 py-1.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-bold flex items-center gap-1">
-                            <Check className="w-3 h-3 stroke-[3]" />
-                            Amigo
-                          </span>
-                        ) : isSent ? (
-                          <span className="px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-semibold flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            Enviada
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleSendFriendRequest(userItem)}
-                            disabled={isProcessing}
-                            className="px-4 py-2 bg-neutral-950 hover:bg-neutral-800 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-transform active:scale-95 shadow-xs"
-                          >
-                            {isProcessing ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <>
-                                <UserPlus className="w-3.5 h-3.5 text-emerald-400" />
-                                <span>Añadir</span>
-                              </>
-                            )}
-                          </button>
-                        )}
-                      </div>
+                      {alreadyFriend ? (
+                        <span className="text-[10px] font-semibold text-[#E8B75E] bg-[#E8B75E]/10 px-2 py-1 rounded-lg">
+                          Conectado ✓
+                        </span>
+                      ) : isSent ? (
+                        <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg">
+                          Enviada ✓
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleSendFriendRequest(user)}
+                          disabled={processingId === user.id}
+                          className="py-1.5 px-3 bg-[#E8B75E] text-[#1B1710] text-[11px] font-semibold rounded-xl hover:bg-[#E8B75E]/90 transition-colors cursor-pointer"
+                        >
+                          Conectar
+                        </button>
+                      )}
                     </div>
                   )
                 })
-              )}
-            </div>
-
-            {/* Código de escuadrón personal secundario (por si quieren compartir su enlace) */}
-            <div className="pt-3 border-t border-neutral-100 flex items-center justify-between bg-neutral-50 px-3.5 py-2.5 rounded-2xl text-xs">
-              <div className="flex flex-col">
-                <span className="text-[10px] text-neutral-400 font-semibold uppercase tracking-wider">
-                  Tu código personal
-                </span>
-                <span className="font-mono text-xs font-bold text-neutral-900">
-                  {squadCode || 'EXHALA'}
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleCopyCode}
-                className="px-3 py-1.5 bg-white border border-neutral-200 text-neutral-700 hover:bg-neutral-100 rounded-xl text-xs font-semibold flex items-center gap-1.5 active:scale-95 transition-all"
-              >
-                {copiedCode ? (
-                  <>
-                    <CheckCheck className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>Copiado</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>Copiar</span>
-                  </>
-                )}
-              </button>
+              ) : searchQuery.trim() ? (
+                <div className="text-center py-6 text-xs text-[#7C9481]">
+                  No se encontraron usuarios con ese nombre
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
       )}
 
-      {/* MODAL DE CHAT EN TIEMPO REAL */}
+      {/* =================================================================== */}
+      {/* 7. MODAL CHAT CON AMIGO                                             */}
+      {/* =================================================================== */}
       {activeChatFriend && (
         <FriendChatModal
-          friend={activeChatFriend}
+          friend={{
+            id: activeChatFriend.id,
+            name: activeChatFriend.name,
+            initials: activeChatFriend.initials,
+            status: activeChatFriend.status,
+            avatarBg: 'bg-[#3B5240]',
+            avatarText: 'text-[#E8B75E]',
+          }}
           currentUserId={userId}
-          currentUserName={userProfile?.full_name || 'Tú'}
+          currentUserName={userName}
           onClose={() => {
             setActiveChatFriend(null)
-            if (userId) loadUnreadCounts(userId)
+            activeChatFriendRef.current = null
           }}
         />
       )}
 
-      {/* BARRA DE NAVEGACIÓN INFERIOR */}
-      <BottomNav
-        currentTab="friends"
-        unreadFriendsCount={Object.values(unreadCounts).reduce((a, b) => a + b, 0)}
-        userRole={userProfile?.role || 'smoker'}
-      />
+      {/* =================================================================== */}
+      {/* 8. MODAL SOS: RESPIRACIÓN EN CAJA DE 60s Y ALERTA A AMIGOS         */}
+      {/* =================================================================== */}
+      {sosOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-sm rounded-[28px] p-6 space-y-5 border border-[rgba(232,84,124,0.3)] relative text-center"
+            style={{
+              background: 'radial-gradient(circle at 50% 0%, #2A171D, #16241C)',
+              color: '#F1EEE2',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setSosOpen(false)}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/10 text-[#A9BBA4] hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="space-y-1">
+              <span className="text-xs font-semibold uppercase tracking-wider text-[#E8547C]">
+                Asistencia Inmediata
+              </span>
+              <h3 className="font-fraunces text-xl font-medium text-[#F1EEE2]">
+                ¡No estás solo! Respira conmigo
+              </h3>
+              <p className="text-xs text-[#A9BBA4]">
+                {sosSending
+                  ? 'Avisando a tus amigos de apoyo...'
+                  : 'Tus amigos han recibido una notificación push de auxilio.'}
+              </p>
+            </div>
+
+            {/* CÍRCULO GUIADO DE RESPIRACIÓN EN CAJA */}
+            <div className="relative w-44 h-44 mx-auto flex items-center justify-center">
+              <div
+                className={`absolute inset-0 rounded-full border-4 transition-all duration-1000 ${
+                  sosBreathPhase === 'Inhala'
+                    ? 'scale-110 border-[#E8B75E] bg-[#E8B75E]/10'
+                    : sosBreathPhase === 'Mantén'
+                    ? 'scale-105 border-cyan-400 bg-cyan-400/10'
+                    : 'scale-90 border-[#E8547C] bg-[#E8547C]/10'
+                }`}
+              />
+              <div className="text-center z-10 space-y-1">
+                <div className="font-fraunces text-2xl text-[#F1EEE2]">
+                  {sosBreathPhase}
+                </div>
+                <div className="text-xs text-[#A9BBA4]">{sosBreathTimer}s</div>
+              </div>
+            </div>
+
+            <p className="text-xs text-[#A9BBA4] italic max-w-xs mx-auto leading-relaxed">
+              El impulso agudo de nicotina dura menos de 3 minutos. Tu mente es más fuerte que la sustancia.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setSosOpen(false)}
+              className="w-full py-3 bg-[rgba(232,183,94,0.15)] hover:bg-[rgba(232,183,94,0.25)] border border-[rgba(232,183,94,0.3)] text-[#E8B75E] text-xs font-semibold rounded-2xl transition-colors cursor-pointer"
+            >
+              Me siento más tranquilo
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
