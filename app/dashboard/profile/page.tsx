@@ -27,6 +27,7 @@ import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
 import { getPushPermission, requestPushPermissionAndSubscribe } from '@/lib/push-notifications'
 import BottomNav from '@/components/BottomNav'
+import NotificationBellButton from '@/components/NotificationBellButton'
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -203,16 +204,20 @@ export default function ProfilePage() {
           </h1>
         </div>
 
-        <button
-          type="button"
-          onClick={handleSignOut}
-          disabled={isLoggingOut}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-700 hover:bg-red-100 rounded-full text-xs font-medium transition-colors"
-          title="Cerrar sesión"
-        >
-          <LogOut className="w-3.5 h-3.5" />
-          <span>{isLoggingOut ? 'Saliendo...' : 'Salir'}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <NotificationBellButton userId={userId} sizeClasses="w-10 h-10" iconSize="w-5 h-5" />
+
+          <button
+            type="button"
+            onClick={handleSignOut}
+            disabled={isLoggingOut}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-red-50 text-red-700 hover:bg-red-100 rounded-2xl text-xs font-semibold transition-colors"
+            title="Cerrar sesión"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>{isLoggingOut ? 'Saliendo...' : 'Salir'}</span>
+          </button>
+        </div>
       </header>
 
       {/* CONTENIDO PRINCIPAL */}

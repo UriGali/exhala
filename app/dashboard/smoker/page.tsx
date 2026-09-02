@@ -32,6 +32,7 @@ import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
 import BottomNav from '@/components/BottomNav'
+import NotificationBellButton from '@/components/NotificationBellButton'
 import { getPushPermission, requestPushPermissionAndSubscribe, isPushSupported } from '@/lib/push-notifications'
 
 // Props para la ilustración de la planta orgánica multi-fase
@@ -848,33 +849,15 @@ export default function SmokerDashboard() {
 
         {/* Botón Notificaciones / Configuración / Indicador de Racha */}
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              if (typeof window !== 'undefined') {
-                localStorage.setItem('last_read_notifications_at', new Date().toISOString())
-              }
-              setUnreadNotificationsCount(0)
-              router.push('/dashboard/notifications')
-            }}
-            className="relative w-8 h-8 rounded-full bg-neutral-100 text-neutral-600 hover:text-neutral-950 flex items-center justify-center transition-colors shadow-2xs"
-            title="Ver notificaciones de riegos y alertas"
-          >
-            <Bell className="w-4 h-4" />
-            {unreadNotificationsCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-3.5 h-3.5 px-0.5 bg-rose-500 text-white text-[8px] font-extrabold rounded-full flex items-center justify-center border-2 border-white shadow-xs animate-pulse">
-                {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
-              </span>
-            )}
-          </button>
+          <NotificationBellButton userId={userId} sizeClasses="w-10 h-10" iconSize="w-5 h-5" />
 
           <button
             type="button"
             onClick={() => setShowConfigModal(true)}
-            className="w-8 h-8 rounded-full bg-neutral-100 text-neutral-600 hover:text-neutral-950 flex items-center justify-center transition-colors"
+            className="w-10 h-10 rounded-2xl bg-neutral-100 text-neutral-600 hover:text-neutral-950 flex items-center justify-center transition-colors"
             title="Ajustar datos de consumo y fecha"
           >
-            <Settings className="w-4 h-4" />
+            <Settings className="w-5 h-5" />
           </button>
 
           <div className="flex items-center gap-1.5 px-3 py-1 bg-neutral-100 rounded-full">

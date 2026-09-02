@@ -29,6 +29,7 @@ import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
 import BottomNav from '@/components/BottomNav'
+import NotificationBellButton from '@/components/NotificationBellButton'
 
 export type BadgeCategory = 'all' | 'time' | 'behavior' | 'unlocked'
 
@@ -394,11 +395,15 @@ export default function AchievementsDashboard() {
           </h1>
         </div>
 
-        <div className="flex items-center gap-1.5 px-3 py-1 bg-white border border-neutral-200 rounded-full shadow-xs">
-          <Award className="w-3.5 h-3.5 text-neutral-900" />
-          <span className="text-xs font-semibold text-neutral-800">
-            {unlockedCount} / {badgesList.length}
-          </span>
+        <div className="flex items-center gap-2">
+          <NotificationBellButton userId={userId} sizeClasses="w-10 h-10" iconSize="w-5 h-5" />
+
+          <div className="flex items-center gap-1.5 px-3 py-2 bg-white border border-neutral-200 rounded-2xl shadow-xs">
+            <Award className="w-4 h-4 text-neutral-900" />
+            <span className="text-xs font-semibold text-neutral-800">
+              {unlockedCount} / {badgesList.length}
+            </span>
+          </div>
         </div>
       </header>
 

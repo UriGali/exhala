@@ -33,6 +33,7 @@ import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
 import FriendChatModal from '@/components/FriendChatModal'
 import BottomNav from '@/components/BottomNav'
+import NotificationBellButton from '@/components/NotificationBellButton'
 import { getPushPermission, requestPushPermissionAndSubscribe, isPushSupported } from '@/lib/push-notifications'
 
 type TabView = 'friends' | 'requests'
@@ -737,19 +738,23 @@ export default function FriendsDashboard() {
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              setShowSearchModal(true)
-              setSearchQuery('')
-              setSearchResults([])
-            }}
-            className="flex items-center gap-2 px-3.5 py-2 bg-white border border-neutral-200/90 text-neutral-800 hover:bg-neutral-50 active:scale-95 rounded-2xl text-xs font-semibold shadow-2xs transition-all"
-            aria-label="Buscar amigos por nombre"
-          >
-            <Search className="w-3.5 h-3.5 text-emerald-700 stroke-[2.5]" />
-            <span>Buscar amigo</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <NotificationBellButton userId={userId} sizeClasses="w-10 h-10" iconSize="w-5 h-5" />
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowSearchModal(true)
+                setSearchQuery('')
+                setSearchResults([])
+              }}
+              className="flex items-center gap-2 px-3.5 py-2.5 bg-white border border-neutral-200/90 text-neutral-800 hover:bg-neutral-50 active:scale-95 rounded-2xl text-xs font-semibold shadow-2xs transition-all"
+              aria-label="Buscar amigos por nombre"
+            >
+              <Search className="w-3.5 h-3.5 text-emerald-700 stroke-[2.5]" />
+              <span>Buscar amigo</span>
+            </button>
+          </div>
         </div>
 
         {/* BANNER PARA ACTIVAR NOTIFICACIONES PUSH MÓVILES */}

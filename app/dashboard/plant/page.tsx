@@ -30,6 +30,7 @@ import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
 import BottomNav from '@/components/BottomNav'
 import GardenPlantVisualizer, { PLANT_SPECIES, PlantSpecies } from '@/components/GardenPlantVisualizer'
+import NotificationBellButton from '@/components/NotificationBellButton'
 
 type PlantTab = 'active' | 'garden'
 
@@ -42,6 +43,7 @@ interface FriendGardenData {
   avatarText: string
   totalWaterings: number
   lastWateredAt: string | null
+  lastWateredByMeAt: string | null
   smokeFreeSince?: string | null
 }
 
@@ -198,6 +200,16 @@ function PlantPageContent() {
               .order('created_at', { ascending: false })
               .limit(1)
 
+            // Cuándo fue la última vez que YO (user.id) regué a este amigo
+            const { data: lastWaterByMe } = await supabase
+              .from('plant_actions')
+              .select('created_at')
+              .eq('smoker_id', rawFriend.id)
+              .eq('friend_id', user.id)
+              .eq('action_type', 'water')
+              .order('created_at', { ascending: false })
+              .limit(1)
+
             const name = rawFriend.full_name || 'Compañero'
             const color = getAvatarColor(name)
             const initials = getInitials(name)
@@ -211,6 +223,7 @@ function PlantPageContent() {
               avatarText: color.text,
               totalWaterings: waterCount || 0,
               lastWateredAt: lastWater?.[0]?.created_at || null,
+              lastWateredByMeAt: lastWaterByMe?.[0]?.created_at || null,
               smokeFreeSince: rawFriend.smoke_free_since,
             })
           }
@@ -362,6 +375,29 @@ function PlantPageContent() {
   const isViewingOwnGarden = selectedGardenId === 'me'
   const currentSelectedFriend = friendsGardens.find((f) => f.id === selectedGardenId) || null
 
+  // Última vez que se regó este jardín específico por parte de este usuario
+  const selectedGardenLastWateredAt = useMemo(() => {
+    if (isViewingOwnGarden) {
+      return myLastWateredAt
+    }
+    return currentSelectedFriend?.lastWateredByMeAt || null
+  }, [isViewingOwnGarden, myLastWateredAt, currentSelectedFriend])
+
+  // Recalcular tiempo de espera de 12 horas al cambiar de jardín o al regar
+  useEffect(() => {
+    if (!selectedGardenLastWateredAt) {
+      setTimeRemainingSeconds(0)
+      return
+    }
+    const diffMs = Date.now() - new Date(selectedGardenLastWateredAt).getTime()
+    const twelveHoursMs = 12 * 60 * 60 * 1000
+    if (diffMs < twelveHoursMs) {
+      setTimeRemainingSeconds(Math.floor((twelveHoursMs - diffMs) / 1000))
+    } else {
+      setTimeRemainingSeconds(0)
+    }
+  }, [selectedGardenLastWateredAt])
+
   const effectiveSubjectName = isViewingOwnGarden
     ? profile?.full_name || 'Mi Planta'
     : currentSelectedFriend?.name || 'Compañero'
@@ -429,10 +465,16 @@ function PlantPageContent() {
           setFriendsGardens((prev) =>
             prev.map((f) =>
               f.id === currentSelectedFriend.id
-                ? { ...f, totalWaterings: nextFriendWaterings, lastWateredAt: nowIso }
+                ? {
+                    ...f,
+                    totalWaterings: nextFriendWaterings,
+                    lastWateredAt: nowIso,
+                    lastWateredByMeAt: nowIso,
+                  }
                 : f
             )
           )
+          setTimeRemainingSeconds(12 * 60 * 60)
           setToastMessage(`💧 ¡Has impulsado la planta de ${currentSelectedFriend.name.split(' ')[0]}!`)
         } else {
           const nextTotal = myWaterings + 1
@@ -529,33 +571,15 @@ function PlantPageContent() {
             <button
               type="button"
               onClick={() => setShowSpeciesInfo(true)}
-              className="w-9 h-9 rounded-full bg-white/80 border border-neutral-200/80 text-neutral-600 hover:text-emerald-700 flex items-center justify-center transition-colors shadow-2xs"
+              className="w-10 h-10 rounded-2xl bg-white/90 border border-neutral-200/80 text-neutral-600 hover:text-emerald-700 flex items-center justify-center transition-colors shadow-2xs"
               title="Ver propiedades y salud"
             >
-              <Info className="w-4 h-4" />
+              <Info className="w-4.5 h-4.5" />
             </button>
           )}
 
-          {/* Notificaciones */}
-          <button
-            type="button"
-            onClick={() => {
-              if (typeof window !== 'undefined') {
-                localStorage.setItem('last_read_notifications_at', new Date().toISOString())
-              }
-              setUnreadNotificationsCount(0)
-              router.push('/dashboard/notifications')
-            }}
-            className="relative w-9 h-9 rounded-full bg-white/80 border border-neutral-200/80 text-neutral-600 hover:text-emerald-700 flex items-center justify-center transition-colors shadow-2xs"
-            title="Ver notificaciones"
-          >
-            <Bell className="w-4 h-4" />
-            {unreadNotificationsCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 bg-rose-500 text-white text-[9px] font-extrabold rounded-full flex items-center justify-center border-2 border-white shadow-xs animate-pulse">
-                {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
-              </span>
-            )}
-          </button>
+          {/* Botón de Notificaciones Reutilizable y Más Grande */}
+          <NotificationBellButton userId={userId} sizeClasses="w-10 h-10" iconSize="w-5 h-5" />
         </div>
       </header>
 
@@ -767,20 +791,33 @@ function PlantPageContent() {
 
               {/* ACCIÓN PRINCIPAL DE RIEGO */}
               <div className="w-full max-w-xs mx-auto pt-4">
-                {/* Caso 1: Guardián regando la planta de un amigo */}
+                {/* Caso 1: Guardián regando la planta de un amigo con cooldown de 12 horas */}
                 {isGuardian && currentSelectedFriend ? (
                   <button
                     type="button"
                     onClick={handleWaterPlant}
-                    disabled={isWateringActive}
-                    className="w-full h-13 bg-emerald-800 hover:bg-emerald-700 active:scale-[0.98] text-white font-semibold text-sm rounded-2xl flex items-center justify-center gap-2.5 shadow-md shadow-emerald-800/20 transition-all disabled:opacity-50"
+                    disabled={isWateringActive || timeRemainingSeconds > 0}
+                    className={`w-full h-13 font-semibold text-sm rounded-2xl flex items-center justify-center gap-2.5 transition-all shadow-md active:scale-[0.98] ${
+                      timeRemainingSeconds > 0
+                        ? 'bg-neutral-100 text-neutral-400 border border-neutral-200/80 shadow-none cursor-not-allowed'
+                        : 'bg-emerald-800 hover:bg-emerald-700 text-white shadow-emerald-800/20'
+                    }`}
                   >
-                    <Droplets className="w-4 h-4 fill-emerald-300 stroke-[2]" />
-                    <span>
-                      {isWateringActive
-                        ? 'Enviando vitalidad...'
-                        : `Regar para apoyar a ${currentSelectedFriend.name.split(' ')[0]}`}
-                    </span>
+                    {timeRemainingSeconds > 0 ? (
+                      <>
+                        <Clock className="w-4 h-4 text-neutral-400" />
+                        <span>Próximo riego en {formattedCountdown}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Droplets className="w-4 h-4 fill-emerald-300 stroke-[2]" />
+                        <span>
+                          {isWateringActive
+                            ? 'Enviando vitalidad...'
+                            : `Regar para apoyar a ${currentSelectedFriend.name.split(' ')[0]} (+1 Vitalidad)`}
+                        </span>
+                      </>
+                    )}
                   </button>
                 ) : isViewingOwnGarden ? (
                   /* Caso 2: Fumador en su propia planta */

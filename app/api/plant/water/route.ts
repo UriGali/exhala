@@ -25,6 +25,33 @@ export async function POST(request: Request) {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, clientOptions)
 
+    // Cooldown de 12 horas: comprobar la última vez que este usuario regó esta planta
+    const { data: lastAction } = await supabase
+      .from('plant_actions')
+      .select('created_at')
+      .eq('smoker_id', smoker_id)
+      .eq('friend_id', friend_id)
+      .eq('action_type', action_type)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (lastAction?.created_at) {
+      const diffMs = Date.now() - new Date(lastAction.created_at).getTime()
+      const twelveHoursMs = 12 * 60 * 60 * 1000
+      if (diffMs < twelveHoursMs) {
+        const remainingSeconds = Math.ceil((twelveHoursMs - diffMs) / 1000)
+        return NextResponse.json(
+          {
+            error: 'Debes esperar 12 horas entre cada riego para esta planta.',
+            cooldown: true,
+            remainingSeconds,
+          },
+          { status: 429 }
+        )
+      }
+    }
+
     const nowIso = new Date().toISOString()
     const { data, error } = await supabase
       .from('plant_actions')
