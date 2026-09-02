@@ -210,6 +210,7 @@ export default function FriendsDashboard() {
   // Historias de 24h
   const [storiesUsers, setStoriesUsers] = useState<UserStoriesGroup[]>([])
   const [showCreateStoryModal, setShowCreateStoryModal] = useState<boolean>(false)
+  const [initialStoryImage, setInitialStoryImage] = useState<string | null>(null)
   const [activeStoryUserIndex, setActiveStoryUserIndex] = useState<number | null>(null)
 
   // Cargar historias de amigos y propias
@@ -1088,7 +1089,10 @@ export default function FriendsDashboard() {
             currentUserId={userId}
             currentUserName={userName}
             usersWithStories={storiesUsers}
-            onOpenCreateStory={() => setShowCreateStoryModal(true)}
+            onOpenCreateStory={(initialImg) => {
+              setInitialStoryImage(initialImg || null)
+              setShowCreateStoryModal(true)
+            }}
             onOpenStoryViewer={(idx) => setActiveStoryUserIndex(idx)}
           />
         </div>
@@ -1822,7 +1826,11 @@ export default function FriendsDashboard() {
         <CreateStoryModal
           currentUserId={userId}
           currentUserName={userName}
-          onClose={() => setShowCreateStoryModal(false)}
+          initialImage={initialStoryImage}
+          onClose={() => {
+            setShowCreateStoryModal(false)
+            setInitialStoryImage(null)
+          }}
           onStoryCreated={(newStory) => {
             setStoriesUsers((prev) => {
               const myIndex = prev.findIndex((u) => u.userId === userId)

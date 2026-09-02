@@ -1,13 +1,14 @@
 'use client'
 
-import React, { useState, useRef } from 'react'
-import { X, Camera, Image as ImageIcon, Sparkles, Loader2, Clock, Check } from 'lucide-react'
+import React, { useState, useRef, useEffect } from 'react'
+import { X, Camera, Image as ImageIcon, Loader2, Sparkles, RefreshCw } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 
 interface CreateStoryModalProps {
   currentUserId: string | null
   currentUserName: string
+  initialImage?: string | null
   onClose: () => void
   onStoryCreated: (story: any) => void
 }
@@ -15,41 +16,49 @@ interface CreateStoryModalProps {
 export default function CreateStoryModal({
   currentUserId,
   currentUserName,
+  initialImage = null,
   onClose,
   onStoryCreated,
 }: CreateStoryModalProps) {
-  const [selectedImage, setSelectedImage] = useState<string | null>(null)
+  const [selectedImage, setSelectedImage] = useState<string | null>(initialImage)
   const [caption, setCaption] = useState<string>('')
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+
   const cameraInputRef = useRef<HTMLInputElement>(null)
+  const galleryInputRef = useRef<HTMLInputElement>(null)
 
-  // Procesar archivo y comprimir en canvas
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  // Si no hay imagen inicial al montar, intentar abrir la cámara directamente
+  useEffect(() => {
+    if (!initialImage && !selectedImage) {
+      // Pequeño timeout para asegurar que el DOM esté listo
+      const timer = setTimeout(() => {
+        cameraInputRef.current?.click()
+      }, 50)
+      return () => clearTimeout(timer)
+    }
+  }, [initialImage])
 
+  // Procesar archivo y redimensionar en canvas para optimizar peso
+  const processImageFile = (file: File) => {
     const reader = new FileReader()
     reader.onload = (event) => {
       const img = new Image()
       img.onload = () => {
-        // Redimensionar para optimizar peso (máx 1080px de alto)
         const canvas = document.createElement('canvas')
-        const MAX_HEIGHT = 1080
-        const MAX_WIDTH = 1080
+        const MAX_DIM = 1200
         let width = img.width
         let height = img.height
 
         if (width > height) {
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width
-            width = MAX_WIDTH
+          if (width > MAX_DIM) {
+            height *= MAX_DIM / width
+            width = MAX_DIM
           }
         } else {
-          if (height > MAX_HEIGHT) {
-            width *= MAX_HEIGHT / height
-            height = MAX_HEIGHT
+          if (height > MAX_DIM) {
+            width *= MAX_DIM / height
+            height = MAX_DIM
           }
         }
 
@@ -58,13 +67,20 @@ export default function CreateStoryModal({
         const ctx = canvas.getContext('2d')
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height)
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.82)
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
           setSelectedImage(dataUrl)
         }
       }
       img.src = event.target?.result as string
     }
     reader.readAsDataURL(file)
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      processImageFile(file)
+    }
   }
 
   // Publicar historia
@@ -105,194 +121,157 @@ export default function CreateStoryModal({
         })
       } catch {}
 
-      const created = data.story || {
-        id: 'story-' + Date.now(),
-        user_id: currentUserId,
-        media_url: selectedImage,
-        caption: caption.trim(),
-        created_at: new Date().toISOString(),
-        expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-      }
-
-      onStoryCreated(created)
+      onStoryCreated(data.story)
       onClose()
     } catch (err: any) {
       console.error('Error creating story:', err)
-      setErrorMsg(err.message || 'Error al publicar historia.')
+      setErrorMsg(err.message || 'Error al publicar la historia.')
     } finally {
       setIsSubmitting(false)
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200 select-none">
+    <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-0 sm:p-4 select-none animate-in fade-in duration-200">
+      {/* INPUTS NATIVOS DE CÁMARA Y GALERÍA */}
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
+      {/* CONTENEDOR ESTILO VISOR / CÁMARA DE INSTAGRAM */}
       <div
-        className="w-full sm:w-[390px] max-h-[90vh] rounded-t-[32px] sm:rounded-[32px] border border-[rgba(232,183,94,0.18)] flex flex-col overflow-hidden shadow-2xl animate-in slide-in-from-bottom duration-300"
-        style={{
-          background: 'radial-gradient(120% 90% at 50% -10%, #223729 0%, #16241C 45%, #0F1913 100%)',
-          fontFamily: "'Work Sans', sans-serif",
-          color: '#F1EEE2',
-        }}
+        className="w-full sm:w-[390px] h-full sm:h-[780px] sm:rounded-[34px] overflow-hidden relative flex flex-col bg-[#0F1913] border sm:border-[rgba(232,183,94,0.18)] shadow-2xl"
+        style={{ fontFamily: "'Work Sans', sans-serif" }}
       >
-        {/* CABECERA */}
-        <header className="p-[18px_20px] border-b border-[rgba(232,183,94,0.12)] flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-[rgba(232,183,94,0.12)] border border-[rgba(232,183,94,0.25)] flex items-center justify-center text-[15px] text-[#E8B75E]">
-              📸
-            </div>
-            <div>
-              <h3 className="font-fraunces font-medium text-[16.5px] text-[#F1EEE2] leading-tight">
-                Nueva Historia
-              </h3>
-              <p className="text-[11px] text-[#7C9481] flex items-center gap-1">
-                <Clock className="w-3 h-3 text-[#E8B75E]" />
-                <span>Visible durante 24 horas</span>
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 rounded-full bg-[rgba(255,255,255,0.05)] border border-[rgba(232,183,94,0.12)] flex items-center justify-center text-[#A9BBA4] hover:text-[#F1EEE2] transition-colors cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </header>
-
-        {/* CONTENIDO */}
-        <div className="p-[20px] space-y-4 overflow-y-auto no-scrollbar">
-          {errorMsg && (
-            <div className="p-2.5 rounded-xl bg-red-500/15 border border-red-500/30 text-xs text-red-200">
-              {errorMsg}
-            </div>
-          )}
-
-          {/* INPUTS OCULTOS DE CÁMARA Y ARCHIVOS */}
-          <input
-            ref={cameraInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={handleFileChange}
-          />
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handleFileChange}
-          />
-
-          {/* ZONA DE PREVIEW O SELECCIÓN DE FOTO */}
+        {/* ============================================================== */}
+        {/* CONTENIDO PRINCIPAL: FOTO O DISPARADOR                         */}
+        {/* ============================================================== */}
+        <div className="relative flex-1 w-full h-full overflow-hidden bg-black flex items-center justify-center">
           {selectedImage ? (
-            <div className="relative rounded-[22px] overflow-hidden border border-[rgba(232,183,94,0.2)] bg-black/40 aspect-[4/5] flex items-center justify-center shadow-inner group">
+            <>
+              {/* IMAGEN SELECCIONADA */}
               <img
                 src={selectedImage}
-                alt="Historia seleccionada"
+                alt="Captura de historia"
                 className="w-full h-full object-cover"
               />
 
-              {/* Botón para cambiar foto */}
+              {/* Degradados sutiles para legibilidad */}
+              <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-b from-black/70 to-transparent pointer-events-none" />
+              <div className="absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-black/85 via-black/40 to-transparent pointer-events-none" />
+
+              {/* CAMPO DE TEXTO DIRECTO SOBRE LA FOTO (ESTILO INSTAGRAM) */}
+              <div className="absolute bottom-24 inset-x-4 z-20 flex justify-center">
+                <div className="w-full max-w-[340px] relative">
+                  <input
+                    type="text"
+                    value={caption}
+                    onChange={(e) => setCaption(e.target.value)}
+                    placeholder="Escribe un mensaje..."
+                    maxLength={90}
+                    className="w-full h-11 px-4 text-center rounded-full bg-black/55 backdrop-blur-md border border-white/20 text-[#F1EEE2] text-[13.5px] placeholder:text-[#A9BBA4] focus:outline-none focus:border-[#E8B75E] focus:bg-black/70 shadow-lg transition-all"
+                  />
+                </div>
+              </div>
+            </>
+          ) : (
+            /* SI NO HAY FOTO AÚN: PANTALLA TIPO DISPARADOR DE CÁMARA */
+            <div className="flex flex-col items-center justify-center gap-6 p-6 text-center">
               <button
                 type="button"
-                onClick={() => setSelectedImage(null)}
-                className="absolute top-3 right-3 p-2 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors backdrop-blur-sm cursor-pointer"
-                title="Elegir otra foto"
+                onClick={() => cameraInputRef.current?.click()}
+                className="w-24 h-24 rounded-full border-4 border-white/40 p-1 flex items-center justify-center group hover:scale-105 active:scale-95 transition-all cursor-pointer shadow-2xl"
+                title="Hacer foto"
               >
-                <X className="w-4 h-4" />
+                <div className="w-full h-full rounded-full bg-gradient-to-tr from-[#EFC471] to-[#E8B75E] flex items-center justify-center shadow-inner">
+                  <Camera className="w-9 h-9 text-[#1B1710]" />
+                </div>
               </button>
 
-              <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-2.5 py-1 rounded-full border border-white/10 text-[10.5px] text-[#E8B75E] flex items-center gap-1">
-                <Sparkles className="w-3 h-3" />
-                <span>Vista previa</span>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-[24px] border-2 border-dashed border-[rgba(232,183,94,0.22)] p-8 flex flex-col items-center justify-center text-center gap-4 bg-[rgba(255,255,255,0.015)]">
-              <div className="w-16 h-16 rounded-full bg-[rgba(232,183,94,0.1)] border border-[rgba(232,183,94,0.25)] flex items-center justify-center text-2xl text-[#E8B75E]">
-                🌿
-              </div>
-
-              <div>
-                <h4 className="font-fraunces text-[16px] text-[#F1EEE2]">
-                  Comparte tu momento sin humo
-                </h4>
-                <p className="text-xs text-[#7C9481] max-w-xs mt-1 leading-relaxed">
-                  Un paseo, un té, tu racha limpia o una foto de tu entorno. Inspira a tus amigos hoy.
-                </p>
-              </div>
-
-              {/* BOTONES DE CAPTURA */}
-              <div className="flex gap-2.5 w-full max-w-xs pt-1">
-                <button
-                  type="button"
-                  onClick={() => cameraInputRef.current?.click()}
-                  className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-[#EFC471] to-[#E8B75E] text-[#1B1710] font-semibold text-xs flex items-center justify-center gap-1.5 hover:scale-[1.02] active:scale-[0.98] transition-all shadow-md cursor-pointer"
-                >
-                  <Camera className="w-4 h-4" />
-                  <span>Hacer Foto</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex-1 py-2.5 px-3 rounded-xl bg-[rgba(255,255,255,0.05)] border border-[rgba(232,183,94,0.2)] text-[#F1EEE2] font-semibold text-xs flex items-center justify-center gap-1.5 hover:bg-[rgba(255,255,255,0.1)] transition-colors cursor-pointer"
-                >
-                  <ImageIcon className="w-4 h-4" />
-                  <span>Galería</span>
-                </button>
-              </div>
+              <span className="text-xs text-[#A9BBA4] font-medium tracking-wide">
+                Toca para abrir la cámara
+              </span>
             </div>
           )}
 
-          {/* PIE DE FOTO */}
-          {selectedImage && (
-            <div>
-              <label className="block text-[12px] font-medium text-[#A9BBA4] mb-1.5">
-                Pie de foto o mensaje (opcional)
-              </label>
-              <input
-                type="text"
-                value={caption}
-                onChange={(e) => setCaption(e.target.value)}
-                placeholder="Ej. Día 4 sin fumar: Paseo respirando aire limpio 🌲"
-                maxLength={90}
-                className="w-full h-11 px-3.5 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(232,183,94,0.16)] text-[#F1EEE2] text-[13px] placeholder:text-[#7C9481] focus:outline-none focus:border-[#E8B75E] transition-colors"
-              />
+          {/* CABECERA SUPERIOR MINIMALISTA */}
+          <div className="absolute top-0 inset-x-0 p-4 z-30 flex items-center justify-between pointer-events-auto">
+            {/* Botón Cerrar */}
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-9 h-9 rounded-full bg-black/40 backdrop-blur-md border border-white/15 flex items-center justify-center text-white hover:bg-black/60 active:scale-95 transition-all cursor-pointer"
+              aria-label="Cerrar"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Si ya hay foto, botón para rehacer foto con cámara */}
+            {selectedImage && (
+              <button
+                type="button"
+                onClick={() => cameraInputRef.current?.click()}
+                className="w-9 h-9 rounded-full bg-black/40 backdrop-blur-md border border-white/15 flex items-center justify-center text-[#E8B75E] hover:bg-black/60 active:scale-95 transition-all cursor-pointer"
+                title="Hacer otra foto"
+              >
+                <RefreshCw className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {/* MENSAJE DE ERROR SI OCURRE */}
+          {errorMsg && (
+            <div className="absolute top-16 inset-x-4 z-40 p-3 rounded-2xl bg-red-500/90 backdrop-blur-md text-white text-xs text-center font-medium shadow-xl">
+              {errorMsg}
             </div>
           )}
         </div>
 
-        {/* PIE DE ACCIÓN */}
-        {selectedImage && (
-          <footer className="p-[14px_20px] border-t border-[rgba(232,183,94,0.1)] bg-[rgba(0,0,0,0.25)] flex gap-2.5">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-2.5 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(232,183,94,0.15)] text-xs text-[#A9BBA4] hover:text-[#F1EEE2] transition-colors cursor-pointer"
-            >
-              Cancelar
-            </button>
+        {/* ============================================================== */}
+        {/* BARRA INFERIOR: GALERÍA (SOLO LOGO) Y BOTÓN PUBLICAR           */}
+        {/* ============================================================== */}
+        <footer className="relative z-30 px-5 py-4 bg-black/80 backdrop-blur-md border-t border-white/10 flex items-center justify-between">
+          {/* ABAJO A LA IZQUIERDA: BOTÓN DE GALERÍA (SOLO EL LOGO) */}
+          <button
+            type="button"
+            onClick={() => galleryInputRef.current?.click()}
+            className="w-12 h-12 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 border border-white/15 flex items-center justify-center text-[#E8B75E] transition-all cursor-pointer shadow-md"
+            title="Elegir de la galería"
+            aria-label="Galería"
+          >
+            <ImageIcon className="w-6 h-6 stroke-[2]" />
+          </button>
 
-            <button
-              type="button"
-              onClick={handlePublish}
-              disabled={isSubmitting}
-              className="flex-[2] py-2.5 rounded-xl bg-gradient-to-r from-[#EFC471] to-[#E8B75E] text-[#1B1710] font-semibold text-xs flex items-center justify-center gap-1.5 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 shadow-md cursor-pointer"
-            >
-              {isSubmitting ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4" />
-                  <span>Publicar (24 horas)</span>
-                </>
-              )}
-            </button>
-          </footer>
-        )}
+          {/* ABAJO A LA DERECHA: BOTÓN PUBLICAR */}
+          <button
+            type="button"
+            onClick={handlePublish}
+            disabled={!selectedImage || isSubmitting}
+            className={`h-12 px-7 rounded-full font-semibold text-[14px] flex items-center justify-center gap-2 transition-all shadow-lg ${
+              selectedImage
+                ? 'bg-gradient-to-r from-[#EFC471] to-[#E8B75E] text-[#1B1710] hover:scale-105 active:scale-95 cursor-pointer shadow-[#E8B75E]/20'
+                : 'bg-white/10 text-white/35 border border-white/10 cursor-not-allowed'
+            }`}
+          >
+            {isSubmitting ? (
+              <Loader2 className="w-5 h-5 animate-spin" />
+            ) : (
+              <span>Publicar</span>
+            )}
+          </button>
+        </footer>
       </div>
     </div>
   )
