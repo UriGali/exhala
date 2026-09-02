@@ -1863,6 +1863,7 @@ export default function FriendsDashboard() {
                 ]
               }
             })
+            if (userId) loadStoriesData(userId)
             showToast('📸 ¡Historia publicada! Estará activa 24 horas.')
           }}
         />
