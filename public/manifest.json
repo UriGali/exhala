@@ -1,0 +1,18 @@
+{
+  "name": "Exhala — Respira libertad",
+  "short_name": "Exhala",
+  "description": "Aplicación de apoyo para dejar de fumar con gamificación botánica y apoyo mutuo.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F8FAF9",
+  "theme_color": "#064e3b",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

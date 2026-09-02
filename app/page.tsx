@@ -19,48 +19,64 @@ export default function OnboardingLoginPage() {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
-  // 0. Comprobar automáticamente si el usuario ya tiene sesión activa válida en el móvil
+  // 0. Comprobar automáticamente si el usuario ya tiene sesión activa persistente en el móvil
   useEffect(() => {
+    let isMounted = true
+
     async function checkExistingSession() {
       try {
+        // 1. Obtener la sesión localmente sin depender de la latencia de red inicial
         const {
-          data: { user },
-          error: userError,
-        } = await supabase.auth.getUser()
+          data: { session },
+        } = await supabase.auth.getSession()
 
-        // Si el usuario no existe en la base de datos o su token expiró/fue eliminado
-        if (userError || !user) {
-          await supabase.auth.signOut().catch(() => {})
-          setCheckingSession(false)
+        if (!session?.user) {
+          if (isMounted) setCheckingSession(false)
           return
         }
 
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('role, full_name')
-          .eq('id', user.id)
-          .maybeSingle<{ role: UserRole; full_name: string | null }>()
+        const user = session.user
 
-        if (!profile?.full_name) {
-          router.push('/onboarding')
-          return
+        // 2. Consultar perfil en base de datos para saber rol y si completó onboarding
+        try {
+          const { data: profile } = await supabase
+            .from('profiles')
+            .select('role, full_name')
+            .eq('id', user.id)
+            .maybeSingle<{ role: UserRole; full_name: string | null }>()
+
+          if (profile) {
+            if (!profile.full_name) {
+              router.replace('/onboarding')
+              return
+            }
+
+            const userRole: UserRole =
+              profile.role ||
+              (user.user_metadata?.role as UserRole) ||
+              'smoker'
+
+            router.replace(userRole === 'friend' ? '/dashboard/friends' : '/dashboard/smoker')
+            return
+          }
+        } catch (profileErr) {
+          console.warn('Network issue fetching profile, fallback to cached metadata:', profileErr)
         }
 
-        const userRole: UserRole =
-          profile?.role ||
-          (user.user_metadata?.role as UserRole) ||
-          'smoker'
-
-        const destination = userRole === 'friend' ? '/dashboard/friends' : '/dashboard/smoker'
-        router.push(destination)
+        // Si falló temporalmente la consulta por red, usar metadatos locales de sesión
+        const cachedRole: UserRole = (user.user_metadata?.role as UserRole) || 'smoker'
+        router.replace(cachedRole === 'friend' ? '/dashboard/friends' : '/dashboard/smoker')
       } catch (err) {
         console.warn('Error checking persistent session:', err)
-        await supabase.auth.signOut().catch(() => {})
-        setCheckingSession(false)
+        if (isMounted) setCheckingSession(false)
       }
     }
 
     checkExistingSession()
+
+    return () => {
+      isMounted = false
+    }
   }, [router])
 
   // 1. Manejo de Login con Google OAuth
