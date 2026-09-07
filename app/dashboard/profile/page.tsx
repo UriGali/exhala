@@ -17,6 +17,8 @@ import {
   Wallet,
   Coins,
   PiggyBank,
+  Settings,
+  HeartPulse,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
@@ -60,21 +62,32 @@ export default function ProfilePage() {
   useEffect(() => {
     async function loadProfile() {
       try {
-        const { data: { user }, error: authError } = await supabase.auth.getUser()
+        const { data: { session }, error: authError } = await supabase.auth.getSession()
+        const user = session?.user
+
         if (authError || !user) {
-          await supabase.auth.signOut().catch(() => {})
-          router.push('/')
-          return
+          const { data: { user: verifiedUser }, error: getUserError } = await supabase.auth.getUser()
+          if (getUserError || !verifiedUser) {
+            await supabase.auth.signOut().catch(() => {})
+            router.push('/')
+            return
+          }
         }
 
-        setUserId(user.id)
-        setUserEmail(user.email || '')
+        const activeUserId = user?.id || (await supabase.auth.getUser()).data.user?.id
+        if (!activeUserId) return
+
+        setUserId(activeUserId)
+        setUserEmail(user?.email || '')
         setPushPermission(getPushPermission())
+
+        // Renderizado instantáneo de la interfaz
+        setLoading(false)
 
         const { data: userProfile } = await supabase
           .from('profiles')
           .select('*')
-          .eq('id', user.id)
+          .eq('id', activeUserId)
           .maybeSingle()
 
         if (userProfile) {
@@ -102,14 +115,14 @@ export default function ProfilePage() {
         const { count: unreadWater } = await supabase
           .from('plant_actions')
           .select('id', { count: 'exact', head: true })
-          .eq('smoker_id', user.id)
-          .neq('friend_id', user.id)
+          .eq('smoker_id', activeUserId)
+          .neq('friend_id', activeUserId)
           .gt('created_at', lastRead)
 
         const { count: unreadSos } = await supabase
           .from('sos_notifications')
           .select('id', { count: 'exact', head: true })
-          .eq('friend_id', user.id)
+          .eq('friend_id', activeUserId)
           .gt('created_at', lastRead)
 
         setUnreadNotificationsCount((unreadWater || 0) + (unreadSos || 0))
@@ -364,7 +377,7 @@ export default function ProfilePage() {
               className="w-[34px] h-[34px] rounded-full border border-[rgba(232,183,94,0.16)] bg-[rgba(255,255,255,0.02)] flex items-center justify-center text-[14px] text-[#A9BBA4] hover:text-[#E8B75E] transition-all cursor-pointer relative"
               title="Notificaciones"
             >
-              🔔
+              <Bell className="w-4 h-4" />
               {unreadNotificationsCount > 0 && (
                 <span className="absolute -top-[2px] -right-[2px] w-[14px] h-[14px] rounded-full bg-[#E8547C] text-white text-[8.5px] font-bold flex items-center justify-center border-2 border-[#16241C]">
                   {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
@@ -588,8 +601,126 @@ export default function ProfilePage() {
               </div>
 
               <p className="text-[11px] text-[#7C9481] text-center italic pt-0.5 leading-relaxed">
-                🌿 Cada día limpio es salud para tus pulmones y libertad financiera para tu vida.
+                Cada día limpio es salud para tus pulmones y libertad financiera para tu vida.
               </p>
+            </div>
+
+            {/* FORMULARIO EDITAR PERFIL Y HÁBITOS */}
+            <div
+              className="rounded-[22px] p-[18px] border border-[rgba(232,183,94,0.18)] space-y-3.5 shadow-lg"
+              style={{
+                background: 'rgba(255, 255, 255, 0.02)',
+              }}
+            >
+              <div className="flex items-center justify-between pb-2 border-b border-[rgba(232,183,94,0.1)]">
+                <div className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-[rgba(232,183,94,0.12)] text-[#E8B75E] flex items-center justify-center text-xs">
+                    <Settings className="w-3.5 h-3.5 text-[#E8B75E]" />
+                  </div>
+                  <h3 className="font-fraunces font-medium text-[15px] text-[#F1EEE2]">
+                    Editar Datos y Hábitos
+                  </h3>
+                </div>
+                <span className="text-[10px] text-[#7C9481]">Ajustes de cálculo</span>
+              </div>
+
+              <form onSubmit={handleSaveProfile} className="space-y-3">
+                {/* Nombre */}
+                <div>
+                  <label className="block text-[11px] font-medium text-[#A9BBA4] mb-1">
+                    Tu nombre completo
+                  </label>
+                  <input
+                    type="text"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="Tu nombre"
+                    required
+                    className="w-full h-10 px-3 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(232,183,94,0.16)] text-[#F1EEE2] text-xs focus:outline-none focus:border-[#E8B75E] transition-colors"
+                  />
+                </div>
+
+                {/* Fecha sin fumar (solo si es fumador) */}
+                {profile?.role !== 'friend' && (
+                  <>
+                    <div>
+                      <label className="block text-[11px] font-medium text-[#A9BBA4] mb-1">
+                        Fecha de inicio libre de tabaco
+                      </label>
+                      <input
+                        type="date"
+                        value={smokeFreeDate}
+                        onChange={(e) => setSmokeFreeDate(e.target.value)}
+                        className="w-full h-10 px-3 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(232,183,94,0.16)] text-[#F1EEE2] text-xs focus:outline-none focus:border-[#E8B75E] transition-colors"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[11px] font-medium text-[#A9BBA4] mb-1">
+                          Cigarrillos / día
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          max="100"
+                          value={cigsPerDay}
+                          onChange={(e) => setCigsPerDay(Number(e.target.value))}
+                          className="w-full h-10 px-3 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(232,183,94,0.16)] text-[#F1EEE2] text-xs focus:outline-none focus:border-[#E8B75E] transition-colors"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-medium text-[#A9BBA4] mb-1">
+                          Precio cajetilla (€)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="1"
+                          max="50"
+                          value={packPrice}
+                          onChange={(e) => setPackPrice(Number(e.target.value))}
+                          className="w-full h-10 px-3 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(232,183,94,0.16)] text-[#F1EEE2] text-xs focus:outline-none focus:border-[#E8B75E] transition-colors"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-medium text-[#A9BBA4] mb-1">
+                        Aportación por recaída al bote común (€)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0.5"
+                        max="50"
+                        value={penaltyAmount}
+                        onChange={(e) => setPenaltyAmount(Number(e.target.value))}
+                        className="w-full h-10 px-3 rounded-xl bg-[rgba(255,255,255,0.04)] border border-[rgba(232,183,94,0.16)] text-[#F1EEE2] text-xs focus:outline-none focus:border-[#E8B75E] transition-colors"
+                      />
+                    </div>
+                  </>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="w-full h-10 rounded-xl bg-gradient-to-r from-[#EFC471] to-[#E8B75E] text-[#1B1710] font-semibold text-xs flex items-center justify-center gap-2 hover:scale-[1.01] active:scale-[0.98] transition-all shadow-md cursor-pointer disabled:opacity-50"
+                >
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Guardando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                      <span>Guardar Parámetros</span>
+                    </>
+                  )}
+                </button>
+              </form>
             </div>
 
             <div className="h-4 shrink-0 pointer-events-none" />
@@ -603,7 +734,7 @@ export default function ProfilePage() {
           type="button"
           onClick={handleTriggerSOS}
           aria-label="Activar alerta SOS"
-          className="fixed bottom-[64px] right-[max(16px,calc(50%-175px))] w-[46px] h-[46px] rounded-full flex items-center justify-center text-[18px] z-50 cursor-pointer shadow-[0_8px_24px_rgba(0,0,0,0.45)] transition-transform hover:scale-105 active:scale-90"
+          className="fixed bottom-[64px] right-[max(16px,calc(50%-175px))] w-[46px] h-[46px] rounded-full flex items-center justify-center z-50 cursor-pointer shadow-[0_8px_24px_rgba(0,0,0,0.45)] transition-transform hover:scale-105 active:scale-90"
           style={{
             background: 'rgba(232, 84, 124, 0.14)',
             backdropFilter: 'blur(8px)',
@@ -611,7 +742,7 @@ export default function ProfilePage() {
             color: '#E8547C',
           }}
         >
-          ♥
+          <HeartPulse className="w-5 h-5 text-[#E8547C]" />
           <span className="absolute -inset-[5px] rounded-full border-[1.5px] border-[rgba(232,84,124,0.28)] animate-pulse-ring pointer-events-none" />
         </button>
 

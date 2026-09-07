@@ -36,10 +36,10 @@ interface GroupChatModalProps {
 }
 
 const QUICK_GROUP_PROMPTS = [
-  '💧 ¡He regado mi planta hoy!',
-  '💪 ¡Mucho ánimo a todos!',
-  '🌿 Respirando limpio y con calma.',
-  '🙌 ¡Un día más sin humo!',
+  'He regado mi planta hoy',
+  '¡Mucho ánimo a todos!',
+  'Respirando limpio y con calma',
+  '¡Un día más sin humo!',
 ]
 
 export default function GroupChatModal({
@@ -60,33 +60,60 @@ export default function GroupChatModal({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  // Cargar mensajes iniciales
+  // Cargar mensajes iniciales y suscribirse a Realtime
   useEffect(() => {
     let isMounted = true
-    setLoading(true)
+    let pollInterval: any = null
+    const channelName = `group-chat-${group.id}`
 
-    async function loadMessages() {
+    async function loadMessages(isInitial = false) {
       try {
         const res = await fetch(`/api/groups/${group.id}/messages`)
         if (res.ok) {
           const data = await res.json()
           if (data.success && Array.isArray(data.messages) && isMounted) {
-            setMessages(data.messages)
+            setMessages((prev) => {
+              // Combinar evitando duplicados y preservando mensajes enviados
+              const existingMap = new Map(prev.map((m) => [m.id, m]))
+              data.messages.forEach((m: GroupMessageItem) => {
+                existingMap.set(m.id, m)
+              })
+              // Filtrar mensajes temporales que ya hayan sido confirmados
+              const list = Array.from(existingMap.values()).sort(
+                (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+              )
+              return list
+            })
           }
         }
       } catch (err) {
         console.warn('Error loading group messages:', err)
       } finally {
-        if (isMounted) setLoading(false)
+        if (isInitial && isMounted) setLoading(false)
       }
     }
 
-    loadMessages()
+    loadMessages(true)
 
-    // Suscripción Realtime a nuevos mensajes en este grupo
-    const channelName = `group-room-${group.id}-${Date.now()}`
-    const channel = supabase
-      .channel(channelName)
+    // Configurar canal Realtime compartido con Broadcast + Postgres Changes
+    const channel = supabase.channel(channelName, {
+      config: {
+        broadcast: { self: false },
+      },
+    })
+
+    channel
+      .on('broadcast', { event: 'new_group_message' }, ({ payload }: { payload: GroupMessageItem }) => {
+        if (!isMounted || !payload) return
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === payload.id)) return prev
+          return [...prev, payload]
+        })
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(`last_read_group_${group.id}`, new Date().toISOString())
+        }
+        setTimeout(scrollToBottom, 60)
+      })
       .on(
         'postgres_changes',
         {
@@ -97,7 +124,7 @@ export default function GroupChatModal({
         },
         async (payload: any) => {
           const newMsg = payload?.new
-          if (!newMsg) return
+          if (!newMsg || !isMounted) return
 
           // Obtener perfil del remitente si no viene en el payload
           let senderProfile: any = null
@@ -110,28 +137,34 @@ export default function GroupChatModal({
             senderProfile = prof
           } catch {}
 
+          const fullMsg: GroupMessageItem = {
+            ...newMsg,
+            sender: senderProfile || {
+              id: newMsg.sender_id,
+              full_name: 'Compañero',
+              role: 'smoker',
+              avatar_url: null,
+            },
+          }
+
           setMessages((prev) => {
-            if (prev.some((m) => m.id === newMsg.id)) return prev
-            return [
-              ...prev,
-              {
-                ...newMsg,
-                sender: senderProfile || {
-                  id: newMsg.sender_id,
-                  full_name: 'Compañero',
-                  role: 'smoker',
-                  avatar_url: null,
-                },
-              },
-            ]
+            if (prev.some((m) => m.id === fullMsg.id)) return prev
+            return [...prev, fullMsg]
           })
 
           if (typeof window !== 'undefined') {
             localStorage.setItem(`last_read_group_${group.id}`, new Date().toISOString())
           }
+          setTimeout(scrollToBottom, 60)
         }
       )
       .subscribe()
+
+    // Polling de respaldo cada 2.5s mientras el chat está abierto para 100% de fiabilidad
+    pollInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return
+      loadMessages(false)
+    }, 2500)
 
     if (typeof window !== 'undefined') {
       localStorage.setItem(`last_read_group_${group.id}`, new Date().toISOString())
@@ -139,6 +172,7 @@ export default function GroupChatModal({
 
     return () => {
       isMounted = false
+      if (pollInterval) clearInterval(pollInterval)
       if (typeof window !== 'undefined') {
         localStorage.setItem(`last_read_group_${group.id}`, new Date().toISOString())
       }
@@ -159,13 +193,14 @@ export default function GroupChatModal({
     setIsSending(true)
     setInputText('')
 
+    const nowIso = new Date().toISOString()
     const tempId = 'temp-' + Date.now()
     const optimisticMsg: GroupMessageItem = {
       id: tempId,
       group_id: group.id,
       sender_id: currentUserId,
       content,
-      created_at: new Date().toISOString(),
+      created_at: nowIso,
       sender: {
         id: currentUserId,
         full_name: currentUserName,
@@ -175,6 +210,7 @@ export default function GroupChatModal({
     }
 
     setMessages((prev) => [...prev, optimisticMsg])
+    setTimeout(scrollToBottom, 50)
 
     try {
       const res = await fetch(`/api/groups/${group.id}/messages`, {
@@ -189,15 +225,25 @@ export default function GroupChatModal({
       if (res.ok) {
         const data = await res.json()
         if (data.success && data.message) {
+          const finalMsg = data.message
           setMessages((prev) =>
-            prev.map((m) => (m.id === tempId ? data.message : m))
+            prev.map((m) => (m.id === tempId ? finalMsg : m))
           )
+
+          // Emitir inmediatamente broadcast a todos los participantes en el canal del grupo
+          const channel = supabase.channel(`group-chat-${group.id}`)
+          channel.send({
+            type: 'broadcast',
+            event: 'new_group_message',
+            payload: finalMsg,
+          })
         }
       }
     } catch (err) {
       console.warn('Error sending group message:', err)
     } finally {
       setIsSending(false)
+      setTimeout(scrollToBottom, 60)
     }
   }
 
@@ -228,7 +274,7 @@ export default function GroupChatModal({
             <div className="flex items-center gap-3 min-w-0">
               {/* Avatar del Grupo */}
               <div className="w-[42px] h-[42px] rounded-full bg-gradient-to-br from-[#EFC471] to-[#E8B75E] text-[#2B1C08] flex items-center justify-center font-bold text-[16px] shrink-0 shadow-md">
-                👥
+                <Users className="w-5 h-5 text-[#2B1C08]" />
               </div>
 
               {/* Nombre e info del grupo */}
@@ -277,7 +323,7 @@ export default function GroupChatModal({
               </div>
             ) : messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center p-6 gap-2 opacity-80">
-                <span className="text-3xl">🌿</span>
+                <Users className="w-8 h-8 text-[#E8B75E]/60 mx-auto" />
                 <p className="font-fraunces text-sm text-[#F1EEE2]">
                   ¡El grupo está abierto para todos!
                 </p>

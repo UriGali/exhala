@@ -504,32 +504,39 @@ export default function FriendsDashboard() {
       })
 
       if (accepted.length > 0) {
-        // Enriquecer amigos con estado botánico real sincronizado
-        const enriched = await Promise.all(
-          accepted.map(async (friend) => {
-            try {
-              const res = await fetch(`/api/plant/status?smokerId=${friend.id}&viewerId=${currentUserId}`)
-              if (res.ok) {
-                const pData = await res.json()
-                if (pData.success && pData.species) {
-                  return {
-                    ...friend,
-                    plantSpecies: pData.species.name,
-                    plantStage: pData.stage,
-                    plantProgressPercent: pData.progressPercent,
-                    totalWaterings: pData.totalWaterings,
-                    canWater: pData.canWater,
-                    cooldownSeconds: pData.remainingCooldownSeconds,
-                    isWatered: !pData.canWater,
-                  }
-                }
-              }
-            } catch (e) {
-              console.warn('Error fetching plant status for friend:', e)
+        // Enriquecer amigos con estado botánico real sincronizado en 1 SOLA petición BATCH
+        const friendSmokerIds = accepted.map((f) => f.id)
+        let batchStatuses: Record<string, any> = {}
+        try {
+          const res = await fetch(
+            `/api/plant/status?smokerIds=${friendSmokerIds.join(',')}&viewerId=${currentUserId}`
+          )
+          if (res.ok) {
+            const pData = await res.json()
+            if (pData.success && pData.statuses) {
+              batchStatuses = pData.statuses
             }
-            return friend
-          })
-        )
+          }
+        } catch (e) {
+          console.warn('Error fetching batch plant status for friends:', e)
+        }
+
+        const enriched = accepted.map((friend) => {
+          const pData = batchStatuses[friend.id]
+          if (pData && pData.species) {
+            return {
+              ...friend,
+              plantSpecies: pData.species.name,
+              plantStage: pData.stage,
+              plantProgressPercent: pData.progressPercent,
+              totalWaterings: pData.totalWaterings,
+              canWater: pData.canWater,
+              cooldownSeconds: pData.remainingCooldownSeconds,
+              isWatered: !pData.canWater,
+            }
+          }
+          return friend
+        })
         setFriendsList(enriched)
       }
       setPendingReceived(received)
@@ -543,32 +550,44 @@ export default function FriendsDashboard() {
   useEffect(() => {
     async function init() {
       try {
-        const { data: { user }, error: authError } = await supabase.auth.getUser()
+        const { data: { session }, error: authError } = await supabase.auth.getSession()
+        const user = session?.user
+
         if (authError || !user) {
-          await supabase.auth.signOut().catch(() => {})
-          router.push('/')
-          return
+          const { data: { user: verifiedUser }, error: getUserError } = await supabase.auth.getUser()
+          if (getUserError || !verifiedUser) {
+            await supabase.auth.signOut().catch(() => {})
+            router.push('/')
+            return
+          }
         }
 
-        setUserId(user.id)
-        setSquadCode(`EXHALA-${user.id.slice(0, 5).toUpperCase()}`)
+        const activeUserId = user?.id || (await supabase.auth.getUser()).data.user?.id
+        if (!activeUserId) return
+
+        setUserId(activeUserId)
+        setSquadCode(`EXHALA-${activeUserId.slice(0, 5).toUpperCase()}`)
+
+        // Renderizado inicial instantáneo sin bloqueo
+        setLoading(false)
 
         const { data: profile } = await supabase
           .from('profiles')
           .select('full_name')
-          .eq('id', user.id)
+          .eq('id', activeUserId)
           .maybeSingle()
 
         if (profile?.full_name) setUserName(profile.full_name)
 
-        await loadFriendsData(user.id)
-        await loadGroupsData(user.id)
-        await loadStoriesData(user.id)
-        await loadUnreadCounts(user.id)
-        await loadUnreadNotifications(user.id)
+        // Cargar datos en segundo plano
+        loadFriendsData(activeUserId)
+        loadGroupsData(activeUserId)
+        loadStoriesData(activeUserId)
+        loadUnreadCounts(activeUserId)
+        loadUnreadNotifications(activeUserId)
 
         // Realtime para inbox de mensajes
-        const channelName = `user-inbox-${user.id}-${Date.now()}`
+        const channelName = `user-inbox-${activeUserId}-${Date.now()}`
         const inboxChannel = supabase
           .channel(channelName)
           .on(
@@ -577,7 +596,7 @@ export default function FriendsDashboard() {
               event: 'INSERT',
               schema: 'public',
               table: 'messages',
-              filter: `receiver_id=eq.${user.id}`,
+              filter: `receiver_id=eq.${activeUserId}`,
             },
             async (payload: any) => {
               const newMsg = payload?.new
@@ -588,13 +607,13 @@ export default function FriendsDashboard() {
                 lastReadTimestampsRef.current[newMsg.sender_id] = nowIso
                 if (typeof window !== 'undefined') {
                   try {
-                    localStorage.setItem(`exhala_chat_read_${user.id}_${newMsg.sender_id}`, nowIso)
+                    localStorage.setItem(`exhala_chat_read_${activeUserId}_${newMsg.sender_id}`, nowIso)
                   } catch {}
                 }
                 fetch('/api/messages/read', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ senderId: newMsg.sender_id, receiverId: user.id }),
+                  body: JSON.stringify({ senderId: newMsg.sender_id, receiverId: activeUserId }),
                 }).catch(() => {})
                 return
               }
@@ -617,7 +636,7 @@ export default function FriendsDashboard() {
           .subscribe()
 
         // Realtime para riegos de plantas de amigos
-        const plantChannelName = `friends-plant-actions-${user.id}-${Date.now()}`
+        const plantChannelName = `friends-plant-actions-${activeUserId}-${Date.now()}`
         const plantChannel = supabase
           .channel(plantChannelName)
           .on(
@@ -636,7 +655,7 @@ export default function FriendsDashboard() {
                     const nextTotal = (f.totalWaterings || 0) + 1
                     const nextStage = nextTotal % 30
                     const nextProgress = Math.min(100, Math.round((nextStage / 30) * 100))
-                    const isMeWhoWatered = newAct.friend_id === user.id
+                    const isMeWhoWatered = newAct.friend_id === activeUserId
                     return {
                       ...f,
                       totalWaterings: nextTotal,
@@ -655,7 +674,7 @@ export default function FriendsDashboard() {
           .subscribe()
 
         // Realtime para mensajes de grupos
-        const groupChannelName = `user-groups-realtime-${user.id}-${Date.now()}`
+        const groupChannelName = `user-groups-realtime-${activeUserId}-${Date.now()}`
         const groupChannel = supabase
           .channel(groupChannelName)
           .on(
@@ -668,7 +687,7 @@ export default function FriendsDashboard() {
             (payload: any) => {
               const newMsg = payload?.new
               if (!newMsg) return
-              if (newMsg.sender_id === user.id) return
+              if (newMsg.sender_id === activeUserId) return
 
               if (activeChatGroupRef.current?.id === newMsg.group_id) {
                 if (typeof window !== 'undefined') {
@@ -703,13 +722,13 @@ export default function FriendsDashboard() {
 
         const unreadInterval = setInterval(() => {
           if (typeof document !== 'undefined' && document.hidden) return
-          loadUnreadCounts(user.id)
-          loadStoriesData(user.id)
-          loadGroupsData(user.id)
+          loadUnreadCounts(activeUserId)
+          loadStoriesData(activeUserId)
+          loadGroupsData(activeUserId)
         }, 10000)
 
         const handleFocus = () => {
-          loadStoriesData(user.id)
+          loadStoriesData(activeUserId)
         }
         window.addEventListener('focus', handleFocus)
 
@@ -718,6 +737,7 @@ export default function FriendsDashboard() {
           window.removeEventListener('focus', handleFocus)
           supabase.removeChannel(inboxChannel)
           supabase.removeChannel(plantChannel)
+          supabase.removeChannel(groupChannel)
         }
       } catch (err) {
         console.error('Error initializing friends page:', err)

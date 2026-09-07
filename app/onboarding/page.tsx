@@ -475,7 +475,7 @@ export default function OnboardingPage() {
         if (guardianError) throw guardianError
 
         setTimeout(() => {
-          router.push('/dashboard/friends')
+          router.push('/dashboard/plant')
         }, 1000)
         return
       }
@@ -510,7 +510,7 @@ export default function OnboardingPage() {
       if (upsertError) throw upsertError
 
       setTimeout(() => {
-        router.push('/dashboard/smoker')
+        router.push('/dashboard/plant')
       }, 1200)
     } catch (err: any) {
       console.error('Error completing onboarding:', err)

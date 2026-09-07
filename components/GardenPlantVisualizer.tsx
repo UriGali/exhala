@@ -376,7 +376,7 @@ export default function GardenPlantVisualizer({
       {showStageBadge && (
         <div className="absolute -bottom-2 px-3 py-1 bg-white/95 backdrop-blur-xs border border-emerald-200/80 rounded-full shadow-xs flex items-center gap-1.5 text-xs font-semibold text-emerald-950">
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span>{safeStage === 30 ? '¡Completamente Madura! 🌺' : `Riego ${safeStage}/30 (${progressPercent}%)`}</span>
+          <span>{safeStage === 30 ? '¡Completamente Madura!' : `Riego ${safeStage}/30 (${progressPercent}%)`}</span>
         </div>
       )}
     </div>

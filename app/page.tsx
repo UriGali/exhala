@@ -51,21 +51,14 @@ export default function OnboardingLoginPage() {
               return
             }
 
-            const userRole: UserRole =
-              profile.role ||
-              (user.user_metadata?.role as UserRole) ||
-              'smoker'
-
-            router.replace(userRole === 'friend' ? '/dashboard/friends' : '/dashboard/plant')
+            router.replace('/dashboard/plant')
             return
           }
         } catch (profileErr) {
           console.warn('Network issue fetching profile, fallback to cached metadata:', profileErr)
         }
 
-        // Si falló temporalmente la consulta por red, usar metadatos locales de sesión
-        const cachedRole: UserRole = (user.user_metadata?.role as UserRole) || 'smoker'
-        router.replace(cachedRole === 'friend' ? '/dashboard/friends' : '/dashboard/plant')
+        router.replace('/dashboard/plant')
       } catch (err) {
         console.warn('Error checking persistent session:', err)
         if (isMounted) setCheckingSession(false)
@@ -160,13 +153,7 @@ export default function OnboardingLoginPage() {
             return
           }
 
-          const userRole: UserRole =
-            profile?.role ||
-            (data.user.user_metadata?.role as UserRole) ||
-            'smoker'
-
-          const destination = userRole === 'friend' ? '/dashboard/friends' : '/dashboard/plant'
-          router.push(destination)
+          router.push('/dashboard/plant')
         }
       } else {
         // --- MODO REGISTRO (NUEVO USUARIO) ---

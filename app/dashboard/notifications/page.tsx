@@ -205,30 +205,39 @@ export default function NotificationsPage() {
     let channel: any = null
 
     const init = async () => {
-      setLoading(true)
       try {
         const {
-          data: { user },
+          data: { session },
           error: authError,
-        } = await supabase.auth.getUser()
+        } = await supabase.auth.getSession()
+        const user = session?.user
 
         if (authError || !user) {
-          await supabase.auth.signOut().catch(() => {})
-          router.push('/')
-          return
+          const { data: { user: verifiedUser }, error: getUserError } = await supabase.auth.getUser()
+          if (getUserError || !verifiedUser) {
+            await supabase.auth.signOut().catch(() => {})
+            router.push('/')
+            return
+          }
         }
 
-        setUserId(user.id)
+        const activeUserId = user?.id || (await supabase.auth.getUser()).data.user?.id
+        if (!activeUserId) return
+
+        setUserId(activeUserId)
+
+        // Renderizado instantáneo
+        setLoading(false)
 
         const { data: userProfile } = await supabase
           .from('profiles')
           .select('*')
-          .eq('id', user.id)
+          .eq('id', activeUserId)
           .maybeSingle()
 
         if (userProfile) setProfile(userProfile)
 
-        await loadNotifications(user.id)
+        loadNotifications(activeUserId)
 
         // Marcar notificaciones como leídas en esta sesión
         if (typeof window !== 'undefined') {
@@ -237,7 +246,7 @@ export default function NotificationsPage() {
         }
 
         // Realtime listener: Escuchar nuevos riegos y alertas SOS en tiempo real
-        const channelName = `user-notifications-${user.id}-${Date.now()}`
+        const channelName = `user-notifications-${activeUserId}-${Date.now()}`
         channel = supabase
           .channel(channelName)
           .on(
@@ -246,11 +255,11 @@ export default function NotificationsPage() {
               event: 'INSERT',
               schema: 'public',
               table: 'plant_actions',
-              filter: `smoker_id=eq.${user.id}`,
+              filter: `smoker_id=eq.${activeUserId}`,
             },
             async (payload: any) => {
               const newAction = payload?.new
-              if (!newAction || newAction.friend_id === user.id) return
+              if (!newAction || newAction.friend_id === activeUserId) return
 
               // Obtener nombre del amigo que regó
               const { data: friendProfile } = await supabase
@@ -297,7 +306,7 @@ export default function NotificationsPage() {
               event: 'INSERT',
               schema: 'public',
               table: 'sos_notifications',
-              filter: `friend_id=eq.${user.id}`,
+              filter: `friend_id=eq.${activeUserId}`,
             },
             async (payload: any) => {
               const newSos = payload?.new

@@ -267,7 +267,7 @@ export default function SOSButton() {
                     onClick={handleClose}
                     className="w-full h-12 bg-neutral-950 hover:bg-neutral-900 text-white font-medium text-xs rounded-2xl transition-transform active:scale-[0.98] shadow-xs"
                   >
-                    Entendido, me mantengo fuerte 🌿
+                    Entendido, me mantengo fuerte
                   </button>
                 </div>
               </>

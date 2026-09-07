@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Clock, Send, Loader2 } from 'lucide-react'
+import { X, Clock, Send, Loader2, Heart, Droplets, Sparkles, Flame, Shield } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { dispatchPushMessageToFriend } from '@/lib/push-notifications'
@@ -193,7 +193,7 @@ export default function StoryViewerModal({
     }
   }
 
-  const handleReaction = (emoji: string, label: string) => {
+  const handleReaction = (iconLabel: string, label: string) => {
     if (!activeUser) return
 
     try {
@@ -204,11 +204,11 @@ export default function StoryViewerModal({
       })
     } catch {}
 
-    setCheerFeedback(`¡Has enviado ${emoji} ${label}!`)
+    setCheerFeedback(`¡Has enviado apoyo: ${label}!`)
     setTimeout(() => setCheerFeedback(null), 2000)
 
     if (onSendCheer) {
-      onSendCheer(activeUser.userId, `${emoji} ${label}`)
+      onSendCheer(activeUser.userId, label)
     }
   }
 
@@ -275,7 +275,7 @@ export default function StoryViewerModal({
         })
       } catch {}
 
-      setCheerFeedback(`💬 Mensaje enviado a ${activeUser.userName.split(' ')[0]}`)
+      setCheerFeedback(`Mensaje enviado a ${activeUser.userName.split(' ')[0]}`)
       setTimeout(() => setCheerFeedback(null), 2500)
 
       setReplyText('')
@@ -505,11 +505,11 @@ export default function StoryViewerModal({
                 {replyText.trim().length === 0 && (
                   <button
                     type="button"
-                    onClick={() => handleReaction('❤️', 'Apoyo')}
-                    className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all flex items-center justify-center text-lg text-white border border-white/15 shrink-0 cursor-pointer"
+                    onClick={() => handleReaction('heart', 'Mucho ánimo')}
+                    className="w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 active:scale-90 transition-all flex items-center justify-center text-white border border-white/15 shrink-0 cursor-pointer"
                     title="Enviar apoyo rápido"
                   >
-                    ❤️
+                    <Heart className="w-5 h-5 fill-[#E8547C] text-[#E8547C]" />
                   </button>
                 )}
               </form>
@@ -517,21 +517,24 @@ export default function StoryViewerModal({
               {/* Reacciones rápidas */}
               <div className="flex items-center justify-between gap-1.5 px-1">
                 {[
-                  { emoji: '💧', label: 'Nutrir' },
-                  { emoji: '💪', label: 'Ánimo' },
-                  { emoji: '🌿', label: 'Limpio' },
-                  { emoji: '🔥', label: 'Fuego' },
-                ].map((reac) => (
-                  <button
-                    key={reac.emoji}
-                    type="button"
-                    onClick={() => handleReaction(reac.emoji, reac.label)}
-                    className="flex-1 py-1 rounded-full bg-white/5 hover:bg-white/15 active:scale-95 transition-all text-[11px] text-white/80 border border-white/5 flex items-center justify-center gap-1 cursor-pointer"
-                  >
-                    <span>{reac.emoji}</span>
-                    <span className="text-[10px] hidden xs:inline">{reac.label}</span>
-                  </button>
-                ))}
+                  { icon: Droplets, color: 'text-sky-300', fill: 'fill-sky-300', label: 'Nutrir' },
+                  { icon: Sparkles, color: 'text-amber-300', fill: 'fill-amber-300', label: 'Ánimo' },
+                  { icon: Shield, color: 'text-emerald-300', fill: 'fill-emerald-300', label: 'Firme' },
+                  { icon: Flame, color: 'text-rose-400', fill: 'fill-rose-400', label: 'Fuerza' },
+                ].map((reac, i) => {
+                  const IconComponent = reac.icon
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => handleReaction(reac.label, reac.label)}
+                      className="flex-1 py-1.5 rounded-full bg-white/5 hover:bg-white/15 active:scale-95 transition-all text-[11px] text-white/90 border border-white/10 flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <IconComponent className={`w-3.5 h-3.5 ${reac.color}`} />
+                      <span className="text-[10.5px] font-medium hidden xs:inline">{reac.label}</span>
+                    </button>
+                  )
+                })}
               </div>
             </div>
           )}

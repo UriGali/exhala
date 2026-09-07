@@ -73,19 +73,30 @@ export default function AchievementsDashboard() {
   useEffect(() => {
     async function loadData() {
       try {
-        const { data: { user }, error: authError } = await supabase.auth.getUser()
+        const { data: { session }, error: authError } = await supabase.auth.getSession()
+        const user = session?.user
+
         if (authError || !user) {
-          await supabase.auth.signOut().catch(() => {})
-          router.push('/')
-          return
+          const { data: { user: verifiedUser }, error: getUserError } = await supabase.auth.getUser()
+          if (getUserError || !verifiedUser) {
+            await supabase.auth.signOut().catch(() => {})
+            router.push('/')
+            return
+          }
         }
 
-        setUserId(user.id)
+        const activeUserId = user?.id || (await supabase.auth.getUser()).data.user?.id
+        if (!activeUserId) return
+
+        setUserId(activeUserId)
+
+        // Renderizado instantáneo
+        setLoading(false)
 
         const { data: userProfile } = await supabase
           .from('profiles')
           .select('*')
-          .eq('id', user.id)
+          .eq('id', activeUserId)
           .maybeSingle()
 
         if (userProfile) {
@@ -99,14 +110,14 @@ export default function AchievementsDashboard() {
           const { count: relapses } = await supabase
             .from('relapses')
             .select('*', { count: 'exact', head: true })
-            .eq('smoker_id', user.id)
+            .eq('smoker_id', activeUserId)
 
           setRelapsesCount(relapses || 0)
 
           const { count: waters } = await supabase
             .from('plant_actions')
             .select('*', { count: 'exact', head: true })
-            .eq('smoker_id', user.id)
+            .eq('smoker_id', activeUserId)
             .eq('action_type', 'water')
 
           setWaterCount(waters || 0)
@@ -761,7 +772,7 @@ export default function AchievementsDashboard() {
       )}
 
       {/* 4. BARRA DE NAVEGACIÓN INFERIOR */}
-      <BottomNav currentTab="badges" />
+      <BottomNav currentTab="profile" />
     </div>
   )
 }

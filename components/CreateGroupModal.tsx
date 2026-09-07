@@ -100,8 +100,8 @@ export default function CreateGroupModal({
         {/* CABECERA */}
         <header className="p-[18px_20px] border-b border-[rgba(232,183,94,0.12)] flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-[rgba(232,183,94,0.12)] border border-[rgba(232,183,94,0.25)] flex items-center justify-center text-[15px] text-[#E8B75E]">
-              ✨
+            <div className="w-8 h-8 rounded-full bg-[rgba(232,183,94,0.12)] border border-[rgba(232,183,94,0.25)] flex items-center justify-center text-[#E8B75E]">
+              <Users className="w-4 h-4 text-[#E8B75E]" />
             </div>
             <div>
               <h3 className="font-fraunces font-medium text-[16.5px] text-[#F1EEE2] leading-tight">

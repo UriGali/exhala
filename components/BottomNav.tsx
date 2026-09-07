@@ -2,102 +2,83 @@
 
 import React from 'react'
 import Link from 'next/link'
+import { Home, User } from 'lucide-react'
 
-export type NavTab = 'friends' | 'home' | 'profile' | 'badges' | 'plant'
+export type NavTab = 'home' | 'profile' | 'plant' | 'friends'
 
 interface BottomNavProps {
   currentTab: NavTab
+  unreadCount?: number
   unreadFriendsCount?: number
   userRole?: string
 }
 
 export default function BottomNav({
   currentTab,
+  unreadCount = 0,
   unreadFriendsCount = 0,
 }: BottomNavProps) {
+  const totalUnread = unreadCount || unreadFriendsCount
+  const isHomeActive = currentTab === 'home' || currentTab === 'plant' || currentTab === 'friends'
+  const isProfileActive = currentTab === 'profile'
+
   return (
     <nav
-      className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[390px] z-40 px-5 pt-1 pb-[calc(5px+env(safe-area-inset-bottom))] flex items-center justify-around border-t border-[rgba(232,183,94,0.12)] backdrop-blur-xl bg-[#0F1913]/95 shadow-[0_-6px_25px_rgba(0,0,0,0.55)] select-none transition-all"
+      className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[390px] z-40 px-8 pt-2 pb-[calc(8px+env(safe-area-inset-bottom))] flex items-center justify-around border-t border-[rgba(232,183,94,0.12)] backdrop-blur-xl bg-[#0F1913]/95 shadow-[0_-8px_30px_rgba(0,0,0,0.6)] select-none transition-all"
       style={{
         fontFamily: "'Work Sans', sans-serif",
       }}
     >
-      {/* 1. Izquierda: Comunidad */}
+      {/* 1. Inicio */}
       <Link
-        href="/dashboard/friends"
-        className={`group flex flex-col items-center gap-[1px] text-[9.5px] py-0.5 px-3 transition-all duration-150 cursor-pointer relative active:scale-95 ${
-          currentTab === 'friends'
+        href="/dashboard/plant"
+        prefetch={true}
+        className={`group flex-1 flex flex-col items-center gap-[3px] text-[11px] py-1 transition-all duration-150 cursor-pointer active:scale-95 ${
+          isHomeActive
             ? 'text-[#E8B75E] font-semibold'
             : 'text-[#7C9481] hover:text-[#F1EEE2]'
         }`}
       >
         <div className="relative flex items-center justify-center">
-          <span
-            className={`text-[16px] leading-none transition-transform duration-150 group-hover:scale-105 ${
-              currentTab === 'friends'
-                ? 'scale-105 drop-shadow-[0_0_6px_rgba(232,183,94,0.35)]'
-                : ''
+          <Home
+            className={`w-[20px] h-[20px] transition-transform duration-150 group-hover:scale-105 ${
+              isHomeActive
+                ? 'scale-105 stroke-[2.2] text-[#E8B75E] drop-shadow-[0_0_8px_rgba(232,183,94,0.4)]'
+                : 'stroke-[1.8]'
             }`}
-          >
-            🌱
-          </span>
-          {unreadFriendsCount > 0 && (
-            <span className="absolute -top-1 -right-2 min-w-[13px] h-[13px] px-0.5 rounded-full bg-[#E8547C] text-white text-[8px] font-bold flex items-center justify-center border border-[#0F1913] shadow-sm animate-pulse">
-              {unreadFriendsCount > 9 ? '9+' : unreadFriendsCount}
+          />
+          {totalUnread > 0 && (
+            <span className="absolute -top-1 -right-2 min-w-[14px] h-[14px] px-1 rounded-full bg-[#E8547C] text-white text-[8.5px] font-bold flex items-center justify-center border border-[#0F1913] shadow-sm animate-pulse">
+              {totalUnread > 9 ? '9+' : totalUnread}
             </span>
           )}
         </div>
-        <span className="tracking-tight">Comunidad</span>
-        {currentTab === 'friends' && (
-          <span className="w-1 h-1 rounded-full bg-[#E8B75E] shadow-[0_0_4px_#E8B75E]" />
-        )}
-      </Link>
-
-      {/* 2. Al medio: Inicio (Jardín) */}
-      <Link
-        href="/dashboard/plant"
-        className={`group flex flex-col items-center gap-[1px] text-[9.5px] py-0.5 px-3 transition-all duration-150 cursor-pointer active:scale-95 ${
-          currentTab === 'home' || currentTab === 'plant'
-            ? 'text-[#E8B75E] font-semibold'
-            : 'text-[#7C9481] hover:text-[#F1EEE2]'
-        }`}
-      >
-        <span
-          className={`text-[16px] leading-none transition-transform duration-150 group-hover:scale-105 ${
-            currentTab === 'home' || currentTab === 'plant'
-              ? 'scale-105 drop-shadow-[0_0_6px_rgba(232,183,94,0.35)]'
-              : ''
-          }`}
-        >
-          ⌂
-        </span>
         <span className="tracking-tight">Inicio</span>
-        {(currentTab === 'home' || currentTab === 'plant') && (
-          <span className="w-1 h-1 rounded-full bg-[#E8B75E] shadow-[0_0_4px_#E8B75E]" />
+        {isHomeActive && (
+          <span className="w-1.5 h-1.5 rounded-full bg-[#E8B75E] shadow-[0_0_6px_#E8B75E] mt-0.5" />
         )}
       </Link>
 
-      {/* 3. A la derecha: Perfil */}
+      {/* 2. Perfil */}
       <Link
         href="/dashboard/profile"
-        className={`group flex flex-col items-center gap-[1px] text-[9.5px] py-0.5 px-3 transition-all duration-150 cursor-pointer active:scale-95 ${
-          currentTab === 'profile'
+        prefetch={true}
+        className={`group flex-1 flex flex-col items-center gap-[3px] text-[11px] py-1 transition-all duration-150 cursor-pointer active:scale-95 ${
+          isProfileActive
             ? 'text-[#E8B75E] font-semibold'
             : 'text-[#7C9481] hover:text-[#F1EEE2]'
         }`}
       >
-        <span
-          className={`text-[16px] leading-none transition-transform duration-150 group-hover:scale-105 ${
-            currentTab === 'profile'
-              ? 'scale-105 drop-shadow-[0_0_6px_rgba(232,183,94,0.35)]'
-              : ''
+        <User
+          className={`w-[20px] h-[20px] transition-transform duration-150 group-hover:scale-105 ${
+            isProfileActive
+              ? 'scale-105 stroke-[2.2] text-[#E8B75E] drop-shadow-[0_0_8px_rgba(232,183,94,0.4)]'
+              : 'stroke-[1.8]'
           }`}
-        >
-          ◑
-        </span>
+        />
         <span className="tracking-tight">Perfil</span>
-        {currentTab === 'profile' && (
-          <span className="w-1 h-1 rounded-full bg-[#E8B75E] shadow-[0_0_4px_#E8B75E]" />
+        {isProfileActive && (
+          <span className="w-1.5 h-1.5 rounded-full bg-[#E8B75E] shadow-[0_0_6px_#E8B75E] mt-0.5" />
         )}
       </Link>
     </nav>

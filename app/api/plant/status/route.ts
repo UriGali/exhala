@@ -11,10 +11,17 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
     const smokerId = searchParams.get('smokerId')
+    const smokerIdsParam = searchParams.get('smokerIds')
     const viewerId = searchParams.get('viewerId')
 
-    if (!smokerId) {
-      return NextResponse.json({ error: 'smokerId is required' }, { status: 400 })
+    const targetIds = smokerIdsParam
+      ? smokerIdsParam.split(',').map((id) => id.trim()).filter(Boolean)
+      : smokerId
+      ? [smokerId.trim()]
+      : []
+
+    if (targetIds.length === 0) {
+      return NextResponse.json({ error: 'smokerId or smokerIds is required' }, { status: 400 })
     }
 
     const authHeader = request.headers.get('Authorization') || request.headers.get('authorization')
@@ -24,96 +31,108 @@ export async function GET(request: Request) {
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, clientOptions)
 
-    // 1. Obtener perfil del fumador (para ver smoke_free_since y nombre)
-    const { data: profile } = await supabase
+    // 1. Obtener perfiles de los fumadores consultados
+    const { data: profiles } = await supabase
       .from('profiles')
       .select('id, full_name, role, smoke_free_since')
-      .eq('id', smokerId)
-      .maybeSingle()
+      .in('id', targetIds)
 
-    // 2. Obtener total de riegos registrados en plant_actions
-    const { count: waterCount, data: lastWaterList } = await supabase
+    const profilesMap = new Map((profiles || []).map((p) => [p.id, p]))
+
+    // 2. Obtener todas las acciones de riego de estos fumadores
+    const { data: allWaterActions } = await supabase
       .from('plant_actions')
-      .select('created_at', { count: 'exact' })
-      .eq('smoker_id', smokerId)
+      .select('id, smoker_id, friend_id, created_at, action_type')
+      .in('smoker_id', targetIds)
       .eq('action_type', 'water')
       .order('created_at', { ascending: false })
-      .limit(1)
 
-    // Base según días limpios (2 riegos por cada día sin fumar)
-    let baseWaterings = 0
-    if (profile?.smoke_free_since) {
-      const smokeFreeTime = new Date(profile.smoke_free_since).getTime()
-      if (!isNaN(smokeFreeTime)) {
-        const daysSince = Math.max(0, Math.floor((Date.now() - smokeFreeTime) / (1000 * 60 * 60 * 24)))
-        baseWaterings = Math.max(0, daysSince * 2)
+    // Agrupar riegos por smoker_id
+    const waterActionsBySmoker = new Map<string, any[]>()
+    allWaterActions?.forEach((act) => {
+      const list = waterActionsBySmoker.get(act.smoker_id) || []
+      list.push(act)
+      waterActionsBySmoker.set(act.smoker_id, list)
+    })
+
+    const speciesList = Array.isArray(PLANT_SPECIES) && PLANT_SPECIES.length > 0 ? PLANT_SPECIES : []
+    const results: Record<string, any> = {}
+
+    for (const sid of targetIds) {
+      const profile = profilesMap.get(sid)
+      const smokerActions = waterActionsBySmoker.get(sid) || []
+
+      let baseWaterings = 0
+      if (profile?.smoke_free_since) {
+        const smokeFreeTime = new Date(profile.smoke_free_since).getTime()
+        if (!isNaN(smokeFreeTime)) {
+          const daysSince = Math.max(0, Math.floor((Date.now() - smokeFreeTime) / (1000 * 60 * 60 * 24)))
+          baseWaterings = Math.max(0, daysSince * 2)
+        }
       }
-    }
 
-    // Cada riego en plant_actions le suma 1 riego más a lo que lleva acumulado
-    const actionWaterings = typeof waterCount === 'number' && !isNaN(waterCount) ? waterCount : 0
-    const rawTotalWaterings = baseWaterings + actionWaterings
-    const totalWaterings = isNaN(rawTotalWaterings) || rawTotalWaterings < 0 ? 0 : rawTotalWaterings
+      const actionWaterings = smokerActions.length
+      const rawTotalWaterings = baseWaterings + actionWaterings
+      const totalWaterings = isNaN(rawTotalWaterings) || rawTotalWaterings < 0 ? 0 : rawTotalWaterings
+      const lastWateredAt = smokerActions[0]?.created_at || null
 
-    const lastWateredAt = lastWaterList?.[0]?.created_at || null
+      let canWater = true
+      let remainingCooldownSeconds = 0
 
-    // 3. Cooldown del visor (viewerId)
-    let canWater = true
-    let remainingCooldownSeconds = 0
-
-    if (viewerId) {
-      const { data: viewerLastWater } = await supabase
-        .from('plant_actions')
-        .select('created_at')
-        .eq('smoker_id', smokerId)
-        .eq('friend_id', viewerId)
-        .eq('action_type', 'water')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-      if (viewerLastWater?.created_at) {
-        const lastWaterTime = new Date(viewerLastWater.created_at).getTime()
-        if (!isNaN(lastWaterTime)) {
-          const diffMs = Date.now() - lastWaterTime
-          const twelveHoursMs = 12 * 60 * 60 * 1000
-          if (diffMs < twelveHoursMs) {
-            canWater = false
-            remainingCooldownSeconds = Math.ceil((twelveHoursMs - diffMs) / 1000)
+      if (viewerId) {
+        const viewerLastWater = smokerActions.find((a) => a.friend_id === viewerId)
+        if (viewerLastWater?.created_at) {
+          const lastWaterTime = new Date(viewerLastWater.created_at).getTime()
+          if (!isNaN(lastWaterTime)) {
+            const diffMs = Date.now() - lastWaterTime
+            const twelveHoursMs = 12 * 60 * 60 * 1000
+            if (diffMs < twelveHoursMs) {
+              canWater = false
+              remainingCooldownSeconds = Math.ceil((twelveHoursMs - diffMs) / 1000)
+            }
           }
         }
       }
+
+      const speciesIndex = Math.floor(totalWaterings / 30) || 0
+      const stage = totalWaterings % 30
+      const species =
+        speciesList[speciesIndex % speciesList.length] || {
+          id: 'bonsai',
+          name: 'Bonsái Zen de Jade',
+          scientificName: 'Crassula Ovata Zen',
+          healingBenefit: 'A los 30 riegos, tus vías respiratorias recuperan su elasticidad natural.',
+        }
+      const progressPercent = Math.min(100, Math.round((stage / 30) * 100))
+
+      results[sid] = {
+        success: true,
+        smokerId: sid,
+        totalWaterings,
+        speciesIndex,
+        stage,
+        species: {
+          id: species.id,
+          name: species.name,
+          scientificName: species.scientificName,
+          healingBenefit: species.healingBenefit,
+        },
+        progressPercent,
+        canWater,
+        remainingCooldownSeconds,
+        lastWateredAt,
+      }
     }
 
-    // 4. Calcular especie y etapa (30 riegos por espécimen)
-    const speciesIndex = Math.floor(totalWaterings / 30) || 0
-    const stage = totalWaterings % 30
-    const speciesList = Array.isArray(PLANT_SPECIES) && PLANT_SPECIES.length > 0 ? PLANT_SPECIES : []
-    const species =
-      speciesList[speciesIndex % speciesList.length] || {
-        id: 'bonsai',
-        name: 'Bonsái Zen de Jade',
-        scientificName: 'Crassula Ovata Zen',
-        healingBenefit: 'A los 30 riegos, tus vías respiratorias recuperan su elasticidad natural.',
-      }
-    const progressPercent = Math.min(100, Math.round((stage / 30) * 100))
+    // Si se solicitó un único smokerId, devolver directamente el objeto por compatibilidad
+    if (smokerId && !smokerIdsParam) {
+      return NextResponse.json(results[smokerId] || { success: false, error: 'Smoker not found' })
+    }
 
+    // Si se solicitaron múltiples, devolver objeto con map 'statuses'
     return NextResponse.json({
       success: true,
-      smokerId,
-      totalWaterings,
-      speciesIndex,
-      stage,
-      species: {
-        id: species.id,
-        name: species.name,
-        scientificName: species.scientificName,
-        healingBenefit: species.healingBenefit,
-      },
-      progressPercent,
-      canWater,
-      remainingCooldownSeconds,
-      lastWateredAt,
+      statuses: results,
     })
   } catch (err: any) {
     console.error('[Plant Status API] Error:', err)

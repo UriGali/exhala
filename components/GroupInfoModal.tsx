@@ -103,7 +103,7 @@ export default function GroupInfoModal({
         })
       } catch {}
 
-      showToast(`✨ Solicitud de amistad enviada a ${member.name.split(' ')[0]}`)
+      showToast(`Solicitud de amistad enviada a ${member.name.split(' ')[0]}`)
       if (onFriendAdded) onFriendAdded(member.user_id)
     } catch (err: any) {
       console.error('Error sending friend request:', err)
@@ -124,7 +124,7 @@ export default function GroupInfoModal({
         {/* TOAST DENTRO DEL MODAL */}
         {toastMessage && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-xs bg-[#16241C]/95 border border-[rgba(232,183,94,0.3)] text-[#F1EEE2] text-xs py-2.5 px-3.5 rounded-2xl shadow-xl flex items-center gap-2 backdrop-blur-md">
-            <span className="text-[#E8B75E]">✨</span>
+            <Sparkles className="w-4 h-4 text-[#E8B75E] shrink-0" />
             <span className="font-medium text-xs">{toastMessage}</span>
           </div>
         )}
@@ -132,8 +132,8 @@ export default function GroupInfoModal({
         {/* CABECERA */}
         <header className="p-[18px_20px] border-b border-[rgba(232,183,94,0.12)] flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-full bg-[rgba(232,183,94,0.12)] border border-[rgba(232,183,94,0.25)] flex items-center justify-center text-[15px] text-[#E8B75E]">
-              👥
+            <div className="w-8 h-8 rounded-full bg-[rgba(232,183,94,0.12)] border border-[rgba(232,183,94,0.25)] flex items-center justify-center text-[#E8B75E]">
+              <Users className="w-4 h-4 text-[#E8B75E]" />
             </div>
             <div>
               <h3 className="font-fraunces font-medium text-[16.5px] text-[#F1EEE2] leading-tight">
@@ -226,7 +226,7 @@ export default function GroupInfoModal({
                       </div>
 
                       <div className="text-[11px] text-[#7C9481] mt-0.5">
-                        {member.role === 'smoker' ? 'Dejando de fumar 🌿' : 'Guardián de apoyo 🛡️'}
+                        {member.role === 'smoker' ? 'Dejando de fumar' : 'Guardián de apoyo'}
                       </div>
                     </div>
                   </div>

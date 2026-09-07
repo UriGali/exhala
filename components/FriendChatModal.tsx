@@ -23,10 +23,10 @@ interface FriendChatModalProps {
 }
 
 const QUICK_PROMPTS = [
-  '💪 ¡Mucho ánimo hoy!',
-  '🌿 ¿Cómo te encuentras?',
-  '💧 ¡Te he enviado apoyo!',
-  '🙌 ¡Aguanta, estoy contigo!',
+  '¡Mucho ánimo hoy!',
+  '¿Cómo te encuentras?',
+  '¡Te he enviado apoyo!',
+  '¡Aguanta, estoy contigo!',
 ]
 
 const isValidUUID = (id?: string | null): boolean => {
@@ -270,7 +270,7 @@ export default function FriendChatModal({
           id: `demo-reply-${Date.now()}`,
           sender_id: friend.id,
           receiver_id: currentUserId,
-          content: `¡Gracias por el mensaje! 💪 Juntos lo vamos a conseguir, cuenta conmigo.`,
+          content: `¡Gracias por el mensaje! Juntos lo vamos a conseguir, cuenta conmigo.`,
           read_at: null,
           created_at: new Date().toISOString(),
         }
