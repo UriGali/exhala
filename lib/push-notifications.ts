@@ -330,3 +330,54 @@ export async function dispatchPushGroupMessage(
     return { success: false }
   }
 }
+
+/**
+ * Dispatches Push Notification when a smoker records a slip-up / penalty.
+ */
+export async function dispatchPushRelapseAlert(
+  smokerId: string,
+  smokerName: string,
+  penaltyAmount: number = 1.0
+): Promise<{ success: boolean }> {
+  try {
+    const { data: friendships } = await supabase
+      .from('friendships')
+      .select('friend_id, smoker_id')
+      .or(`smoker_id.eq.${smokerId},friend_id.eq.${smokerId}`)
+      .eq('status', 'accepted')
+
+    if (!friendships || friendships.length === 0) return { success: true }
+
+    const friendIds = Array.from(
+      new Set(
+        friendships
+          .map((f) => (f.smoker_id === smokerId ? f.friend_id : f.smoker_id))
+          .filter((id) => id && id !== smokerId)
+      )
+    )
+
+    if (friendIds.length === 0) return { success: true }
+
+    const { data: { session } } = await supabase.auth.getSession()
+
+    const response = await fetch('/api/push/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      },
+      body: JSON.stringify({
+        friendIds,
+        title: `Apoyo para ${smokerName}`,
+        body: `${smokerName} ha tenido un tropiezo (+${penaltyAmount.toFixed(2)} € al bote). ¡Mándale ánimo para continuar!`,
+        url: '/dashboard/plant',
+      }),
+    })
+
+    const data = await response.json().catch(() => ({}))
+    return { success: !!data?.success }
+  } catch (err) {
+    console.warn('Error dispatching relapse push alert:', err)
+    return { success: false }
+  }
+}

@@ -36,7 +36,7 @@ import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { Profile, Message } from '@/types/database.types'
 import { PLANT_SPECIES, PlantSpecies } from '@/lib/plant-species'
-import { dispatchPushAlertToFriends } from '@/lib/push-notifications'
+import { dispatchPushAlertToFriends, dispatchPushRelapseAlert } from '@/lib/push-notifications'
 import BottomNav from '@/components/BottomNav'
 import StoriesBar from '@/components/StoriesBar'
 import CreateStoryModal from '@/components/CreateStoryModal'
@@ -116,6 +116,11 @@ function PlantPageContent() {
 
   // Modal Ver Propio Jardín Completo
   const [showOwnGardenModal, setShowOwnGardenModal] = useState<boolean>(false)
+
+  // Modal de Registro de Tropiezo / Recaída (Multa 1 €)
+  const [showRelapseModal, setShowRelapseModal] = useState<boolean>(false)
+  const [relapseNotes, setRelapseNotes] = useState<string>('')
+  const [isSubmittingRelapse, setIsSubmittingRelapse] = useState<boolean>(false)
 
   // SOS Crisis State
   const [sosOpen, setSosOpen] = useState<boolean>(false)
@@ -536,6 +541,74 @@ function PlantPageContent() {
     }
   }
 
+  // Registrar tropiezo / cigarrillo fumado (Multa de 1 € al bote y reinicio de días limpios)
+  const handleConfirmRelapse = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    if (!userId || isSubmittingRelapse) return
+
+    setIsSubmittingRelapse(true)
+    const penaltyValue = Number(profile?.penalty_amount) || 1.0
+
+    try {
+      // 1. Guardar en la tabla relapses
+      await supabase.from('relapses').insert({
+        smoker_id: userId,
+        penalty_amount: penaltyValue,
+        notes: relapseNotes.trim() || 'Tropiezo de 1 cigarrillo',
+        date: new Date().toISOString(),
+      })
+
+      // 2. Reiniciar fecha smoke_free_since a la fecha y hora actual exacta
+      const nowIso = new Date().toISOString()
+      await supabase
+        .from('profiles')
+        .update({
+          smoke_free_since: nowIso,
+          updated_at: nowIso,
+        })
+        .eq('id', userId)
+
+      // 3. Actualizar estado local inmediatamente (contador de días vuelve a 0)
+      setProfile((prev) => (prev ? { ...prev, smoke_free_since: nowIso } : null))
+
+      // 4. Notificar a todos los amigos y guardianes en la base de datos
+      const { data: friendships } = await supabase
+        .from('friendships')
+        .select('friend_id, smoker_id')
+        .or(`smoker_id.eq.${userId},friend_id.eq.${userId}`)
+        .eq('status', 'accepted')
+
+      const friendIds = Array.from(
+        new Set(
+          (friendships || [])
+            .map((f) => (f.smoker_id === userId ? f.friend_id : f.smoker_id))
+            .filter((id) => id && id !== userId)
+        )
+      )
+
+      if (friendIds.length > 0) {
+        const notifications = friendIds.map((targetId) => ({
+          smoker_id: userId,
+          friend_id: targetId,
+          message: `${userName} ha tenido un tropiezo puntual (+${penaltyValue.toFixed(2)} € al bote). ¡Mándale un mensaje de apoyo para retomar el hábito limpio!`,
+        }))
+        await supabase.from('sos_notifications').insert(notifications)
+
+        // 5. Enviar notificación push web a los móviles de los amigos
+        dispatchPushRelapseAlert(userId, userName, penaltyValue).catch(() => {})
+      }
+
+      setShowRelapseModal(false)
+      setRelapseNotes('')
+      showToast(`Compromiso registrado (+${penaltyValue.toFixed(2)} € al bote). Contador reiniciado. ¡Un tropiezo no te detiene, volvemos a empezar!`)
+    } catch (err: any) {
+      console.error('Error registrando recaída:', err)
+      showToast('No se pudo guardar el registro.')
+    } finally {
+      setIsSubmittingRelapse(false)
+    }
+  }
+
   // Abrir chat individual con un amigo
   const handleOpenFriendChat = (friend: FriendItem, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
@@ -685,47 +758,9 @@ function PlantPageContent() {
         )}
 
         {/* =================================================================== */}
-        {/* 1. CABECERA PRINCIPAL                                               */}
+        {/* 1. BARRA DE HISTORIAS DE 24H (ARRIBA DEL TODO)                      */}
         {/* =================================================================== */}
-        <header className="pt-[18px] px-[20px] pb-1 relative z-10 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full bg-[rgba(232,183,94,0.12)] border border-[rgba(232,183,94,0.25)] flex items-center justify-center text-[#E8B75E]">
-              <Sprout className="w-4 h-4 text-[#E8B75E]" />
-            </div>
-            <div>
-              <h1 className="font-fraunces font-medium text-[20px] text-[#F1EEE2] tracking-tight leading-none">
-                Exhala
-              </h1>
-              <span className="text-[11px] text-[#7C9481]">Respira y florece</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {/* Campana de Notificaciones */}
-            <button
-              type="button"
-              onClick={() => {
-                if (typeof window !== 'undefined') {
-                  localStorage.setItem('last_read_notifications_at', new Date().toISOString())
-                }
-                setUnreadNotificationsCount(0)
-                router.push('/dashboard/notifications')
-              }}
-              aria-label="Notificaciones"
-              className="w-[34px] h-[34px] rounded-full border border-[rgba(232,183,94,0.18)] bg-[rgba(230,240,227,0.03)] flex items-center justify-center text-[14px] text-[#A9BBA4] hover:text-[#E8B75E] transition-all cursor-pointer relative"
-            >
-              <Bell className="w-4 h-4" />
-              {unreadNotificationsCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-[#E8547C] rounded-full border border-[#16241C] animate-pulse" />
-              )}
-            </button>
-          </div>
-        </header>
-
-        {/* =================================================================== */}
-        {/* 2. BARRA DE HISTORIAS DE 24H (ARRIBA DEL TODO)                      */}
-        {/* =================================================================== */}
-        <div className="px-[16px]">
+        <div className="pt-3 px-[16px]">
           <StoriesBar
             currentUserId={userId}
             currentUserName={userName}
@@ -1022,8 +1057,31 @@ function PlantPageContent() {
         </main>
 
         {/* =================================================================== */}
-        {/* 6. BOTÓN FLOTANTE SOS (HERO CRISIS ASSISTANCE)                       */}
+        {/* 6. BOTONES FLOTANTES: SOS (DERECHA) Y TROPIEZO 1€ (IZQUIERDA)       */}
         {/* =================================================================== */}
+        {/* BOTÓN FLOTANTE REGISTRAR TROPIEZO (1 €) - ABAJO A LA IZQUIERDA */}
+        {profile?.role !== 'friend' && (
+          <button
+            type="button"
+            onClick={() => setShowRelapseModal(true)}
+            aria-label="Registrar tropiezo (1 €)"
+            title="Registrar cigarrillo fumado (1 € de aportación al bote)"
+            className="fixed bottom-[66px] left-[max(16px,calc(50%-175px))] w-[46px] h-[46px] rounded-full flex items-center justify-center z-50 cursor-pointer shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-transform hover:scale-105 active:scale-90"
+            style={{
+              background: 'rgba(232, 183, 94, 0.16)',
+              backdropFilter: 'blur(8px)',
+              border: '1.5px solid rgba(232, 183, 94, 0.45)',
+              color: '#E8B75E',
+            }}
+          >
+            <Coins className="w-5 h-5 text-[#E8B75E]" />
+            <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-gradient-to-r from-[#EFC471] to-[#E8B75E] text-[#1B1710] font-black text-[9px] rounded-full flex items-center justify-center shadow-md">
+              1€
+            </span>
+          </button>
+        )}
+
+        {/* BOTÓN FLOTANTE SOS - ABAJO A LA DERECHA */}
         <button
           type="button"
           onClick={handleTriggerSOS}
@@ -1402,6 +1460,87 @@ function PlantPageContent() {
             >
               Me siento más tranquilo
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* 11. MODAL REGISTRAR TROPIEZO / CIGARRILLO FUMADO (MULTA 1 €)        */}
+      {/* =================================================================== */}
+      {showRelapseModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-200 select-none">
+          <div
+            className="w-full max-w-sm rounded-[28px] p-6 space-y-4 border border-[rgba(232,183,94,0.25)] relative text-center shadow-2xl"
+            style={{
+              background: 'radial-gradient(120% 90% at 50% -10%, #253A2C 0%, #16241C 50%, #0F1913 100%)',
+              color: '#F1EEE2',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setShowRelapseModal(false)}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-white/5 border border-white/10 text-[#A9BBA4] hover:text-white flex items-center justify-center cursor-pointer transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="w-12 h-12 mx-auto rounded-full bg-[rgba(232,183,94,0.14)] border border-[rgba(232,183,94,0.3)] flex items-center justify-center text-[#E8B75E] shadow-sm">
+              <Coins className="w-6 h-6 text-[#E8B75E]" />
+            </div>
+
+            <div className="space-y-1">
+              <span className="text-[10.5px] uppercase font-bold tracking-wider text-[#E8B75E] bg-[#E8B75E]/10 border border-[#E8B75E]/20 px-2.5 py-0.5 rounded-full">
+                Compromiso y Honestidad
+              </span>
+              <h3 className="font-fraunces text-xl font-medium text-[#F1EEE2] pt-1">
+                ¿Has fumado un cigarrillo?
+              </h3>
+              <p className="text-xs text-[#A9BBA4] leading-relaxed max-w-xs mx-auto">
+                Un tropiezo no anula lo que has construido. Sé honesto contigo mismo y sigue adelante con más fuerza.
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-black/35 border border-[rgba(232,183,94,0.15)] space-y-1 text-center">
+              <span className="text-[11px] text-[#7C9481]">Aportación acordada al bote común</span>
+              <div className="font-fraunces font-bold text-2xl text-[#E8B75E]">
+                +{(Number(profile?.penalty_amount) || 1.0).toFixed(2)} €
+              </div>
+              <span className="text-[10px] text-[#A9BBA4] block">
+                Tu contador limpio se reiniciará hoy para marcar tu nuevo récord.
+              </span>
+            </div>
+
+            <form onSubmit={handleConfirmRelapse} className="space-y-3 pt-1">
+              <input
+                type="text"
+                value={relapseNotes}
+                onChange={(e) => setRelapseNotes(e.target.value)}
+                placeholder="Motivo (opcional: estrés, fiesta...)"
+                className="w-full h-10 px-3.5 rounded-xl bg-white/5 border border-[rgba(232,183,94,0.18)] text-[#F1EEE2] text-xs placeholder:text-[#7C9481] focus:outline-none focus:border-[#E8B75E] transition-colors"
+              />
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRelapseModal(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-[#A9BBA4] hover:text-[#F1EEE2] text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={isSubmittingRelapse}
+                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-[#EFC471] to-[#E8B75E] text-[#1B1710] text-xs font-bold shadow-md hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+                >
+                  {isSubmittingRelapse ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <span>Aportar 1 € y reiniciar</span>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
