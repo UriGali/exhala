@@ -758,9 +758,20 @@ function PlantPageContent() {
         )}
 
         {/* =================================================================== */}
-        {/* 1. BARRA DE HISTORIAS DE 24H (ARRIBA DEL TODO)                      */}
+        {/* 1. BARRA DE HISTORIAS DE 24H Y CONTADOR DÍAS LIMPIOS ARRIBA DERECHA */}
         {/* =================================================================== */}
-        <div className="pt-3 px-[16px]">
+        <div className="pt-3.5 px-[16px] relative z-10">
+          {profile?.role !== 'friend' && (
+            <div className="flex items-center justify-end mb-1 px-1">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[rgba(232,183,94,0.1)] border border-[rgba(232,183,94,0.24)] shadow-xs">
+                <Sparkles className="w-3 h-3 text-emerald-400" />
+                <span className="text-[11.5px] font-bold text-[#E8B75E] tracking-tight">
+                  {myDaysClean} {myDaysClean === 1 ? 'día libre' : 'días libres'}
+                </span>
+              </div>
+            </div>
+          )}
+
           <StoriesBar
             currentUserId={userId}
             currentUserName={userName}
