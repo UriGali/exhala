@@ -381,3 +381,59 @@ export async function dispatchPushRelapseAlert(
     return { success: false }
   }
 }
+
+/**
+ * Dispatches Push Notification to all connected friends when a smoker reaches a weekly smoke-free milestone (1 to 20 weeks).
+ */
+export async function dispatchPushMilestoneToFriends(
+  smokerId: string,
+  smokerName: string,
+  weeks: number
+): Promise<{ success: boolean; dispatchedCount: number }> {
+  try {
+    const { data: friendships } = await supabase
+      .from('friendships')
+      .select('friend_id, smoker_id')
+      .or(`smoker_id.eq.${smokerId},friend_id.eq.${smokerId}`)
+      .eq('status', 'accepted')
+
+    if (!friendships || friendships.length === 0) {
+      return { success: true, dispatchedCount: 0 }
+    }
+
+    const friendIds = Array.from(
+      new Set(
+        friendships
+          .map((f) => (f.smoker_id === smokerId ? f.friend_id : f.smoker_id))
+          .filter((id) => id && id !== smokerId)
+      )
+    )
+
+    if (friendIds.length === 0) {
+      return { success: true, dispatchedCount: 0 }
+    }
+
+    const weeksText = weeks === 1 ? '1 semana' : `${weeks} semanas`
+    const { data: { session } } = await supabase.auth.getSession()
+
+    const response = await fetch('/api/push/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      },
+      body: JSON.stringify({
+        friendIds,
+        title: `🎉 ¡${weeksText} sin fumar!`,
+        body: `¡Enhorabuena! ${smokerName} lleva ${weeksText} sin fumar.`,
+        url: '/dashboard/friends',
+      }),
+    })
+
+    const resData = await response.json().catch(() => ({}))
+    return { success: !!resData?.success, dispatchedCount: resData?.deliveredTo || friendIds.length }
+  } catch (err) {
+    console.warn('Error dispatching milestone push notification:', err)
+    return { success: false, dispatchedCount: 0 }
+  }
+}

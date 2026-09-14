@@ -125,7 +125,15 @@ export default function ProfilePage() {
           .eq('friend_id', activeUserId)
           .gt('created_at', lastRead)
 
-        setUnreadNotificationsCount((unreadWater || 0) + (unreadSos || 0))
+        const { count: unreadMilestones } = await supabase
+          .from('milestone_notifications')
+          .select('id', { count: 'exact', head: true })
+          .eq('friend_id', activeUserId)
+          .gt('created_at', lastRead)
+
+        setUnreadNotificationsCount(
+          (unreadWater || 0) + (unreadSos || 0) + (unreadMilestones || 0)
+        )
       } catch (err) {
         console.error('Error loading profile:', err)
       } finally {

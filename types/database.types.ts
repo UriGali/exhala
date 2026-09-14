@@ -428,6 +428,57 @@ export interface Database {
         }
         Relationships: []
       }
+      milestone_notifications: {
+        Row: {
+          id: string
+          smoker_id: string
+          friend_id: string
+          weeks: number
+          streak_start: string | null
+          title: string
+          message: string
+          read_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          smoker_id: string
+          friend_id: string
+          weeks: number
+          streak_start?: string | null
+          title?: string
+          message: string
+          read_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          smoker_id?: string
+          friend_id?: string
+          weeks?: number
+          streak_start?: string | null
+          title?: string
+          message?: string
+          read_at?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'milestone_notifications_smoker_id_fkey'
+            columns: ['smoker_id']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedSchema: 'public'
+          },
+          {
+            foreignKeyName: 'milestone_notifications_friend_id_fkey'
+            columns: ['friend_id']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedSchema: 'public'
+          }
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -456,6 +507,7 @@ export type Relapse = Tables<'relapses'>
 export type Badge = Tables<'badges'>
 export type PlantAction = Tables<'plant_actions'>
 export type SOSNotification = Tables<'sos_notifications'>
+export type MilestoneNotification = Tables<'milestone_notifications'>
 export type Message = Tables<'messages'>
 export type PushSubscriptionRecord = Tables<'push_subscriptions'>
 export type Group = Tables<'groups'>

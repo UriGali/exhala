@@ -43,7 +43,13 @@ export default function NotificationBellButton({
         .eq('friend_id', uid)
         .gt('created_at', lastRead)
 
-      setUnreadCount((unreadWater || 0) + (unreadSos || 0))
+      const { count: unreadMilestones } = await supabase
+        .from('milestone_notifications')
+        .select('id', { count: 'exact', head: true })
+        .eq('friend_id', uid)
+        .gt('created_at', lastRead)
+
+      setUnreadCount((unreadWater || 0) + (unreadSos || 0) + (unreadMilestones || 0))
     } catch (err) {
       console.warn('Error fetching unread notifications count:', err)
     }
@@ -90,6 +96,20 @@ export default function NotificationBellButton({
             event: 'INSERT',
             schema: 'public',
             table: 'sos_notifications',
+            filter: `friend_id=eq.${uid}`,
+          },
+          (payload: any) => {
+            if (payload?.new) {
+              setUnreadCount((prev) => prev + 1)
+            }
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'milestone_notifications',
             filter: `friend_id=eq.${uid}`,
           },
           (payload: any) => {

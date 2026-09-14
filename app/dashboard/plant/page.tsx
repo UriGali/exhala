@@ -37,6 +37,7 @@ import { supabase } from '@/lib/supabase/client'
 import { Profile, Message } from '@/types/database.types'
 import { PLANT_SPECIES, PlantSpecies } from '@/lib/plant-species'
 import { dispatchPushAlertToFriends, dispatchPushRelapseAlert } from '@/lib/push-notifications'
+import { checkAndDispatchSmokerMilestones } from '@/lib/milestones'
 import BottomNav from '@/components/BottomNav'
 import StoriesBar from '@/components/StoriesBar'
 import CreateStoryModal from '@/components/CreateStoryModal'
@@ -358,6 +359,29 @@ function PlantPageContent() {
         if (userProfile) {
           setProfile(userProfile)
           if (userProfile.full_name) setUserName(userProfile.full_name)
+
+          // Evaluar hitos semanales sin fumar (1 a 20 semanas) y notificar a amigos
+          if (userProfile.role === 'smoker' && userProfile.smoke_free_since) {
+            checkAndDispatchSmokerMilestones(userProfile)
+              .then(({ newlyDispatched }) => {
+                if (newlyDispatched.length > 0) {
+                  const latestWeek = Math.max(...newlyDispatched)
+                  const weekText = latestWeek === 1 ? '1 semana' : `${latestWeek} semanas`
+                  showToast(
+                    `🎉 ¡Enhorabuena! Llevas ${weekText} sin fumar. Tus amigos han sido notificados.`
+                  )
+                  try {
+                    confetti({
+                      particleCount: 60,
+                      spread: 80,
+                      origin: { y: 0.3 },
+                      colors: ['#10B981', '#F59E0B', '#38BDF8'],
+                    })
+                  } catch {}
+                }
+              })
+              .catch(() => {})
+          }
         }
 
         // Cargas en segundo plano

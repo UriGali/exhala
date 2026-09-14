@@ -573,7 +573,60 @@ CREATE POLICY "Users can delete their own stories"
     USING (
         auth.uid() = user_id
     );
+-- ==============================================================================
+-- 2.11. MILESTONE NOTIFICATIONS (NOTIFICACIONES DE HITOS SEMANALES SIN FUMAR)
+-- Notificaciones enviadas a todos los amigos cuando un fumador cumple 1, 2, 3 ... hasta 20 semanas sin fumar
+-- ==============================================================================
+CREATE TABLE public.milestone_notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    smoker_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    friend_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    weeks INTEGER NOT NULL CHECK (weeks >= 1 AND weeks <= 20),
+    streak_start TIMESTAMPTZ,
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    read_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    CONSTRAINT unique_smoker_friend_milestone UNIQUE (smoker_id, friend_id, weeks, streak_start)
+);
 
+CREATE INDEX idx_milestone_notifications_friend_id ON public.milestone_notifications(friend_id, created_at DESC);
+CREATE INDEX idx_milestone_notifications_smoker_id ON public.milestone_notifications(smoker_id, created_at DESC);
 
+-- RLS: MILESTONE NOTIFICATIONS
+ALTER TABLE public.milestone_notifications ENABLE ROW LEVEL SECURITY;
 
+-- Smoker can insert milestone notifications for their accepted friends
+CREATE POLICY "Smoker can insert milestone notifications"
+    ON public.milestone_notifications
+    FOR INSERT
+    TO authenticated
+    WITH CHECK (
+        auth.uid() = smoker_id
+        AND EXISTS (
+            SELECT 1 FROM public.friendships
+            WHERE (
+                (public.friendships.smoker_id = auth.uid() AND public.friendships.friend_id = public.milestone_notifications.friend_id)
+                OR (public.friendships.friend_id = auth.uid() AND public.friendships.smoker_id = public.milestone_notifications.friend_id)
+            )
+            AND public.friendships.status = 'accepted'
+        )
+    );
 
+-- Both the smoker and the friend can view milestone notifications
+CREATE POLICY "Parties can view milestone notifications"
+    ON public.milestone_notifications
+    FOR SELECT
+    TO authenticated
+    USING (
+        auth.uid() = smoker_id
+        OR auth.uid() = friend_id
+    );
+
+-- Friends can mark milestone notifications as read
+CREATE POLICY "Friends can update milestone notifications"
+    ON public.milestone_notifications
+    FOR UPDATE
+    TO authenticated
+    USING (auth.uid() = friend_id)
+    WITH CHECK (auth.uid() = friend_id);

@@ -13,21 +13,21 @@ import {
   Clock,
   Sparkles,
   MessageCircle,
-  CheckCircle2,
+  Trophy,
   Users,
-  ChevronRight,
-  Filter,
+  Award,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { Profile } from '@/types/database.types'
 import BottomNav from '@/components/BottomNav'
 
-type NotificationFilter = 'all' | 'water' | 'sos'
+type NotificationFilter = 'all' | 'milestones' | 'water' | 'sos'
 
 interface NotificationItem {
   id: string
-  type: 'water' | 'sos'
+  type: 'water' | 'sos' | 'milestone'
+  weeks?: number
   senderId: string
   senderName: string
   senderRole?: 'smoker' | 'friend'
@@ -83,7 +83,6 @@ function formatRelativeTime(dateString: string): string {
 
 export default function NotificationsPage() {
   const router = useRouter()
-  const [userId, setUserId] = useState<string | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState<boolean>(true)
   const [activeFilter, setActiveFilter] = useState<NotificationFilter>('all')
@@ -135,6 +134,27 @@ export default function NotificationsPage() {
 
       if (sosError) {
         console.warn('Error loading sos_notifications:', sosError)
+      }
+
+      // 3. Consultar notificaciones de hitos recibidas
+      const { data: milestoneAlerts, error: milestoneError } = await supabase
+        .from('milestone_notifications')
+        .select(`
+          id,
+          smoker_id,
+          friend_id,
+          weeks,
+          title,
+          message,
+          created_at,
+          smoker:profiles!milestone_notifications_smoker_id_fkey(id, full_name, role)
+        `)
+        .or(`friend_id.eq.${currentUserId},smoker_id.eq.${currentUserId}`)
+        .order('created_at', { ascending: false })
+        .limit(30)
+
+      if (milestoneError) {
+        console.warn('Error loading milestone_notifications:', milestoneError)
       }
 
       const formattedNotifications: NotificationItem[] = []
@@ -189,6 +209,34 @@ export default function NotificationsPage() {
         }
       }
 
+      // Mapear notificaciones de hitos semanales
+      if (milestoneAlerts) {
+        for (const m of milestoneAlerts) {
+          const smokerProfile = (m as any).smoker
+          const smokerName = smokerProfile?.full_name || 'Un compañero'
+          const avatar = getAvatarColor(smokerName)
+          const initials = getInitials(smokerName)
+          const weeks = m.weeks || 1
+          const weeksText = weeks === 1 ? '1 semana' : `${weeks} semanas`
+
+          formattedNotifications.push({
+            id: `milestone-${m.id}`,
+            type: 'milestone',
+            weeks,
+            senderId: m.smoker_id,
+            senderName: smokerName,
+            senderRole: smokerProfile?.role,
+            senderAvatarBg: avatar.bg,
+            senderAvatarText: avatar.text,
+            senderInitials: initials,
+            title: m.title || `🎉 ¡${weeksText} sin fumar!`,
+            message: m.message || `¡Enhorabuena! ${smokerName} lleva ${weeksText} sin fumar.`,
+            createdAt: m.created_at,
+            actionUrl: '/dashboard/friends',
+          })
+        }
+      }
+
       // Ordenar cronológicamente descendente
       formattedNotifications.sort(
         (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
@@ -224,8 +272,6 @@ export default function NotificationsPage() {
         const activeUserId = user?.id || (await supabase.auth.getUser()).data.user?.id
         if (!activeUserId) return
 
-        setUserId(activeUserId)
-
         // Renderizado instantáneo
         setLoading(false)
 
@@ -245,7 +291,7 @@ export default function NotificationsPage() {
           window.dispatchEvent(new Event('notifications_read'))
         }
 
-        // Realtime listener: Escuchar nuevos riegos y alertas SOS en tiempo real
+        // Realtime listener: Escuchar nuevos riegos, alertas SOS e hitos en tiempo real
         const channelName = `user-notifications-${activeUserId}-${Date.now()}`
         channel = supabase
           .channel(channelName)
@@ -261,7 +307,6 @@ export default function NotificationsPage() {
               const newAction = payload?.new
               if (!newAction || newAction.friend_id === activeUserId) return
 
-              // Obtener nombre del amigo que regó
               const { data: friendProfile } = await supabase
                 .from('profiles')
                 .select('full_name, role')
@@ -341,6 +386,61 @@ export default function NotificationsPage() {
               showToast(`🚨 ¡Alerta SOS de ${smokerName}!`)
             }
           )
+          .on(
+            'postgres_changes',
+            {
+              event: 'INSERT',
+              schema: 'public',
+              table: 'milestone_notifications',
+              filter: `friend_id=eq.${activeUserId}`,
+            },
+            async (payload: any) => {
+              const newMilestone = payload?.new
+              if (!newMilestone) return
+
+              const { data: smokerProfile } = await supabase
+                .from('profiles')
+                .select('full_name, role')
+                .eq('id', newMilestone.smoker_id)
+                .maybeSingle()
+
+              const smokerName = smokerProfile?.full_name || 'Un compañero'
+              const avatar = getAvatarColor(smokerName)
+              const initials = getInitials(smokerName)
+              const weeks = newMilestone.weeks || 1
+              const weeksText = weeks === 1 ? '1 semana' : `${weeks} semanas`
+
+              const newNotificationItem: NotificationItem = {
+                id: `milestone-${newMilestone.id}`,
+                type: 'milestone',
+                weeks,
+                senderId: newMilestone.smoker_id,
+                senderName: smokerName,
+                senderRole: smokerProfile?.role,
+                senderAvatarBg: avatar.bg,
+                senderAvatarText: avatar.text,
+                senderInitials: initials,
+                title: newMilestone.title || `🎉 ¡${weeksText} sin fumar!`,
+                message:
+                  newMilestone.message ||
+                  `¡Enhorabuena! ${smokerName} lleva ${weeksText} sin fumar.`,
+                createdAt: newMilestone.created_at || new Date().toISOString(),
+                actionUrl: '/dashboard/friends',
+              }
+
+              setNotifications((prev) => [newNotificationItem, ...prev])
+              showToast(`🎉 ¡Enhorabuena! ${smokerName} lleva ${weeksText} sin fumar.`)
+
+              try {
+                confetti({
+                  particleCount: 50,
+                  spread: 70,
+                  origin: { y: 0.2 },
+                  colors: ['#10B981', '#F59E0B', '#38BDF8'],
+                })
+              } catch {}
+            }
+          )
           .subscribe()
       } catch (err) {
         console.error('Error initializing notifications page:', err)
@@ -360,6 +460,9 @@ export default function NotificationsPage() {
 
   // Filtrar notificaciones según tab activo
   const filteredNotifications = useMemo(() => {
+    if (activeFilter === 'milestones') {
+      return notifications.filter((n) => n.type === 'milestone')
+    }
     if (activeFilter === 'water') {
       return notifications.filter((n) => n.type === 'water')
     }
@@ -369,8 +472,18 @@ export default function NotificationsPage() {
     return notifications
   }, [notifications, activeFilter])
 
-  const waterCount = useMemo(() => notifications.filter((n) => n.type === 'water').length, [notifications])
-  const sosCount = useMemo(() => notifications.filter((n) => n.type === 'sos').length, [notifications])
+  const milestoneCount = useMemo(
+    () => notifications.filter((n) => n.type === 'milestone').length,
+    [notifications]
+  )
+  const waterCount = useMemo(
+    () => notifications.filter((n) => n.type === 'water').length,
+    [notifications]
+  )
+  const sosCount = useMemo(
+    () => notifications.filter((n) => n.type === 'sos').length,
+    [notifications]
+  )
 
   if (loading) {
     return (
@@ -409,10 +522,10 @@ export default function NotificationsPage() {
           </button>
           <div>
             <h1 className="text-base font-bold text-neutral-950 leading-tight">
-              Actividad & Riegos
+              Actividad & Alertas
             </h1>
             <p className="text-[11px] text-neutral-400 font-medium">
-              Notificaciones de apoyo en tiempo real
+              Hitos, riegos y apoyo en tiempo real
             </p>
           </div>
         </div>
@@ -428,35 +541,53 @@ export default function NotificationsPage() {
 
       {/* FILTROS DE ACTIVIDAD */}
       <div className="px-6 mt-4">
-        <div className="grid grid-cols-3 p-1 bg-neutral-200/70 rounded-2xl">
+        <div className="grid grid-cols-4 p-1 bg-neutral-200/70 rounded-2xl gap-0.5">
           <button
             type="button"
             onClick={() => setActiveFilter('all')}
-            className={`py-2 text-xs font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1 ${
+            className={`py-2 text-[11px] font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1 ${
               activeFilter === 'all'
-                ? 'bg-white text-neutral-950 shadow-xs'
+                ? 'bg-white text-neutral-950 shadow-xs font-bold'
                 : 'text-neutral-500 hover:text-neutral-800'
             }`}
           >
             <span>Todas</span>
-            <span className="text-[10px] font-bold px-1.5 py-0.2 bg-neutral-100 rounded-full text-neutral-600">
+            <span className="text-[9px] font-bold px-1.5 py-0.2 bg-neutral-100 rounded-full text-neutral-600">
               {notifications.length}
             </span>
           </button>
 
           <button
             type="button"
+            onClick={() => setActiveFilter('milestones')}
+            className={`py-2 text-[11px] font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1 ${
+              activeFilter === 'milestones'
+                ? 'bg-white text-neutral-950 shadow-xs font-bold'
+                : 'text-neutral-500 hover:text-neutral-800'
+            }`}
+          >
+            <Trophy className="w-3 h-3 text-amber-500" />
+            <span>Hitos</span>
+            {milestoneCount > 0 && (
+              <span className="text-[9px] font-bold px-1.5 py-0.2 bg-amber-100 rounded-full text-amber-800">
+                {milestoneCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveFilter('water')}
-            className={`py-2 text-xs font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1 ${
+            className={`py-2 text-[11px] font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1 ${
               activeFilter === 'water'
-                ? 'bg-white text-neutral-950 shadow-xs'
+                ? 'bg-white text-neutral-950 shadow-xs font-bold'
                 : 'text-neutral-500 hover:text-neutral-800'
             }`}
           >
             <Droplets className="w-3 h-3 text-sky-600" />
             <span>Riegos</span>
             {waterCount > 0 && (
-              <span className="text-[10px] font-bold px-1.5 py-0.2 bg-sky-100 rounded-full text-sky-800">
+              <span className="text-[9px] font-bold px-1.5 py-0.2 bg-sky-100 rounded-full text-sky-800">
                 {waterCount}
               </span>
             )}
@@ -465,16 +596,16 @@ export default function NotificationsPage() {
           <button
             type="button"
             onClick={() => setActiveFilter('sos')}
-            className={`py-2 text-xs font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1 ${
+            className={`py-2 text-[11px] font-semibold rounded-xl transition-all duration-200 flex items-center justify-center gap-1 ${
               activeFilter === 'sos'
-                ? 'bg-white text-neutral-950 shadow-xs'
+                ? 'bg-white text-neutral-950 shadow-xs font-bold'
                 : 'text-neutral-500 hover:text-neutral-800'
             }`}
           >
             <AlertTriangle className="w-3 h-3 text-rose-600" />
             <span>SOS</span>
             {sosCount > 0 && (
-              <span className="text-[10px] font-bold px-1.5 py-0.2 bg-rose-100 rounded-full text-rose-800">
+              <span className="text-[9px] font-bold px-1.5 py-0.2 bg-rose-100 rounded-full text-rose-800">
                 {sosCount}
               </span>
             )}
@@ -487,24 +618,30 @@ export default function NotificationsPage() {
         {filteredNotifications.length === 0 ? (
           <div className="bg-white border border-neutral-100 rounded-3xl p-8 text-center space-y-3 shadow-xs my-6">
             <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
-              {activeFilter === 'water' ? (
-                <Droplets className="w-6 h-6" />
+              {activeFilter === 'milestones' ? (
+                <Trophy className="w-6 h-6 text-amber-500" />
+              ) : activeFilter === 'water' ? (
+                <Droplets className="w-6 h-6 text-sky-500" />
               ) : activeFilter === 'sos' ? (
-                <AlertTriangle className="w-6 h-6" />
+                <AlertTriangle className="w-6 h-6 text-rose-500" />
               ) : (
-                <Sprout className="w-6 h-6" />
+                <Sprout className="w-6 h-6 text-emerald-600" />
               )}
             </div>
             <div className="space-y-1">
               <h3 className="text-sm font-bold text-neutral-950">
-                {activeFilter === 'water'
+                {activeFilter === 'milestones'
+                  ? 'Sin hitos semanales registrados aún'
+                  : activeFilter === 'water'
                   ? 'Sin riegos recibidos aún'
                   : activeFilter === 'sos'
                   ? 'Sin alertas de auxilio activas'
                   : 'Bandeja de actividad vacía'}
               </h3>
               <p className="text-xs text-neutral-400 max-w-xs mx-auto leading-relaxed">
-                {activeFilter === 'water'
+                {activeFilter === 'milestones'
+                  ? 'Cada vez que un amigo fumador cumpla 1, 2, 3... hasta 20 semanas sin fumar, recibirás aquí su celebración de enhorabuena.'
+                  : activeFilter === 'water'
                   ? 'Cuando tus guardianes o amigos rieguen tu planta botánica, los avisos aparecerán aquí en directo.'
                   : 'Aquí recibirás las alertas de tus compañeros cuando necesiten motivación o apoyo en tiempo real.'}
               </p>
@@ -522,28 +659,43 @@ export default function NotificationsPage() {
         ) : (
           <div className="space-y-2.5">
             {filteredNotifications.map((item) => {
+              const isMilestone = item.type === 'milestone'
               const isWater = item.type === 'water'
 
               return (
                 <div
                   key={item.id}
-                  className="bg-white border border-neutral-100 rounded-3xl p-4 shadow-xs hover:border-neutral-200 transition-all space-y-3"
+                  className={`bg-white border rounded-3xl p-4 shadow-xs transition-all space-y-3 ${
+                    isMilestone
+                      ? 'border-amber-200/80 bg-gradient-to-br from-white via-amber-50/20 to-emerald-50/20'
+                      : 'border-neutral-100 hover:border-neutral-200'
+                  }`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     {/* Avatar y Datos del Remitente */}
                     <div className="flex items-center gap-3">
                       <div className="relative">
                         <div
-                          className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xs font-bold ${item.senderAvatarBg} ${item.senderAvatarText}`}
+                          className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xs font-bold ${
+                            isMilestone
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                              : `${item.senderAvatarBg} ${item.senderAvatarText}`
+                          }`}
                         >
                           {item.senderInitials}
                         </div>
                         <div
                           className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center text-white border-2 border-white ${
-                            isWater ? 'bg-sky-500' : 'bg-rose-500'
+                            isMilestone
+                              ? 'bg-amber-500'
+                              : isWater
+                              ? 'bg-sky-500'
+                              : 'bg-rose-500'
                           }`}
                         >
-                          {isWater ? (
+                          {isMilestone ? (
+                            <Trophy className="w-2.5 h-2.5" />
+                          ) : isWater ? (
                             <Droplets className="w-2.5 h-2.5" />
                           ) : (
                             <AlertTriangle className="w-2.5 h-2.5" />
@@ -556,7 +708,13 @@ export default function NotificationsPage() {
                           <h4 className="text-xs font-bold text-neutral-950">
                             {item.senderName}
                           </h4>
-                          {item.senderRole === 'friend' && (
+                          {isMilestone && (
+                            <span className="text-[9px] font-bold text-amber-800 bg-amber-100/90 border border-amber-300 px-1.5 py-0.2 rounded-md flex items-center gap-1">
+                              <Sparkles className="w-2.5 h-2.5 text-amber-600" />
+                              <span>{item.weeks || 1} {(item.weeks || 1) === 1 ? 'semana' : 'semanas'}</span>
+                            </span>
+                          )}
+                          {!isMilestone && item.senderRole === 'friend' && (
                             <span className="text-[9px] font-semibold text-sky-700 bg-sky-50 border border-sky-200/70 px-1.5 py-0.2 rounded-md">
                               Guardián
                             </span>
@@ -571,18 +729,30 @@ export default function NotificationsPage() {
 
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        isWater
+                        isMilestone
+                          ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                          : isWater
                           ? 'bg-emerald-50 text-emerald-800 border border-emerald-200/60'
                           : 'bg-rose-50 text-rose-800 border border-rose-200/60'
                       }`}
                     >
-                      {isWater ? '+1 Riego 🌱' : 'SOS 🚨'}
+                      {isMilestone
+                        ? `🎉 ${item.weeks || 1} ${(item.weeks || 1) === 1 ? 'Semana' : 'Semanas'}`
+                        : isWater
+                        ? '+1 Riego 🌱'
+                        : 'SOS 🚨'}
                     </span>
                   </div>
 
                   {/* Mensaje descriptivo */}
-                  <div className="bg-neutral-50/80 rounded-2xl p-3 border border-neutral-100">
-                    <p className="text-xs text-neutral-700 leading-relaxed font-medium">
+                  <div
+                    className={`rounded-2xl p-3 border ${
+                      isMilestone
+                        ? 'bg-amber-50/70 border-amber-200/60 text-amber-950'
+                        : 'bg-neutral-50/80 border-neutral-100 text-neutral-700'
+                    }`}
+                  >
+                    <p className="text-xs leading-relaxed font-medium">
                       {item.message}
                     </p>
                   </div>
@@ -592,9 +762,18 @@ export default function NotificationsPage() {
                     <button
                       type="button"
                       onClick={() => router.push(item.actionUrl)}
-                      className="flex-1 py-2 px-3 bg-neutral-950 text-white text-[11px] font-semibold rounded-xl flex items-center justify-center gap-1.5 hover:bg-neutral-800 transition-colors shadow-2xs"
+                      className={`flex-1 py-2 px-3 text-white text-[11px] font-semibold rounded-xl flex items-center justify-center gap-1.5 transition-colors shadow-2xs ${
+                        isMilestone
+                          ? 'bg-amber-600 hover:bg-amber-700'
+                          : 'bg-neutral-950 hover:bg-neutral-800'
+                      }`}
                     >
-                      {isWater ? (
+                      {isMilestone ? (
+                        <>
+                          <Award className="w-3.5 h-3.5 text-amber-200" />
+                          <span>Felicitar a {item.senderName}</span>
+                        </>
+                      ) : isWater ? (
                         <>
                           <Sprout className="w-3.5 h-3.5 text-emerald-400" />
                           <span>Ver mi Planta</span>
