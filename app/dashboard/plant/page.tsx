@@ -1437,6 +1437,22 @@ function PlantPageContent() {
           currentUserId={userId}
           currentUserName={userName}
           onClose={() => setActiveStoryUserIndex(null)}
+          onStoryDeleted={(deletedStoryId, authorUserId) => {
+            setStoriesUsers((prev) => {
+              return prev
+                .map((userGrp) => {
+                  if (userGrp.userId === authorUserId) {
+                    return {
+                      ...userGrp,
+                      stories: userGrp.stories.filter((s) => s.id !== deletedStoryId),
+                    }
+                  }
+                  return userGrp
+                })
+                .filter((userGrp) => userGrp.stories.length > 0)
+            })
+            if (userId) loadStoriesData(userId)
+          }}
         />
       )}
 

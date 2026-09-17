@@ -243,3 +243,65 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 })
   }
 }
+
+export async function DELETE(request: Request) {
+  try {
+    const authHeader = request.headers.get('Authorization') || request.headers.get('authorization')
+    const { searchParams } = new URL(request.url)
+    let storyId = searchParams.get('storyId') || searchParams.get('id')
+    let userId = searchParams.get('userId') || searchParams.get('user_id')
+
+    if (!storyId || !userId) {
+      try {
+        const body = await request.json()
+        storyId = storyId || body.storyId || body.story_id || body.id
+        userId = userId || body.userId || body.user_id
+      } catch {}
+    }
+
+    if (!storyId || !userId) {
+      return NextResponse.json(
+        { success: false, error: 'storyId and userId are required' },
+        { status: 400 }
+      )
+    }
+
+    const clientOptions = authHeader
+      ? { global: { headers: { Authorization: authHeader } } }
+      : undefined
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, clientOptions)
+
+    // 1. Eliminar primero registros de vistas asociadas por precaución
+    try {
+      await supabase.from('story_views').delete().eq('story_id', storyId)
+    } catch (e) {
+      console.warn('[Stories DELETE API] Warning deleting story views:', e)
+    }
+
+    // 2. Eliminar la historia verificando que pertenezca al usuario
+    const { data: deletedStory, error: deleteError } = await supabase
+      .from('stories')
+      .delete()
+      .eq('id', storyId)
+      .eq('user_id', userId)
+      .select()
+
+    if (deleteError) {
+      console.error('[Stories DELETE API] Error deleting story:', deleteError)
+      return NextResponse.json(
+        { success: false, error: deleteError.message },
+        { status: 500 }
+      )
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'Historia eliminada con éxito',
+      deleted: deletedStory,
+    })
+  } catch (err: any) {
+    console.error('[Stories DELETE API] Error:', err)
+    return NextResponse.json({ success: false, error: err.message }, { status: 500 })
+  }
+}

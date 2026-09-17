@@ -14,6 +14,7 @@ import {
   Eye,
   ChevronUp,
   Users,
+  Trash2,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
@@ -53,6 +54,7 @@ interface StoryViewerModalProps {
   currentUserName?: string
   onClose: () => void
   onSendCheer?: (targetUserId: string, reaction: string) => void
+  onStoryDeleted?: (storyId: string, userId: string) => void
 }
 
 const STORY_DURATION_MS = 5000
@@ -64,16 +66,27 @@ export default function StoryViewerModal({
   currentUserName,
   onClose,
   onSendCheer,
+  onStoryDeleted,
 }: StoryViewerModalProps) {
+  const [localGroups, setLocalGroups] = useState<UserStoriesGroup[]>(usersWithStories)
   const [currentUserIndex, setCurrentUserIndex] = useState<number>(initialUserIndex)
   const [currentStoryIndex, setCurrentStoryIndex] = useState<number>(0)
   const [isPaused, setIsPaused] = useState<boolean>(false)
   const [cheerFeedback, setCheerFeedback] = useState<string | null>(null)
 
+  // Sincronizar localGroups si cambia la prop
+  useEffect(() => {
+    setLocalGroups(usersWithStories)
+  }, [usersWithStories])
+
   // Drawer / Bottom Sheet de visualizaciones para historias propias
   const [showViewersModal, setShowViewersModal] = useState<boolean>(false)
   const [liveViewers, setLiveViewers] = useState<StoryViewerInfo[]>([])
   const [isLoadingViewers, setIsLoadingViewers] = useState<boolean>(false)
+
+  // Estado de confirmación de eliminación
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false)
+  const [isDeleting, setIsDeleting] = useState<boolean>(false)
 
   // Registro de visualizaciones ya enviadas en la sesión
   const recordedViewsRef = useRef<Set<string>>(new Set())
@@ -90,7 +103,7 @@ export default function StoryViewerModal({
   const storyStartTimeRef = useRef<number>(Date.now())
   const elapsedBeforePauseRef = useRef<number>(0)
 
-  const activeUser = usersWithStories[currentUserIndex] || null
+  const activeUser = localGroups[currentUserIndex] || null
   const activeStories = activeUser?.stories || []
   const currentStory = activeStories[currentStoryIndex] || null
   const isOwnStory = activeUser?.userId === currentUserId
@@ -112,7 +125,7 @@ export default function StoryViewerModal({
       setCurrentStoryIndex((prev) => prev + 1)
       elapsedBeforePauseRef.current = 0
       storyStartTimeRef.current = Date.now()
-    } else if (currentUserIndex < usersWithStories.length - 1) {
+    } else if (currentUserIndex < localGroups.length - 1) {
       setCurrentUserIndex((prev) => prev + 1)
       setCurrentStoryIndex(0)
       elapsedBeforePauseRef.current = 0
@@ -120,7 +133,7 @@ export default function StoryViewerModal({
     } else {
       onClose()
     }
-  }, [activeUser, currentStoryIndex, activeStories.length, currentUserIndex, usersWithStories.length, onClose])
+  }, [activeUser, currentStoryIndex, activeStories.length, currentUserIndex, localGroups.length, onClose])
 
   // Navegar a la historia o usuario anterior
   const handlePrev = useCallback(() => {
@@ -130,13 +143,106 @@ export default function StoryViewerModal({
       storyStartTimeRef.current = Date.now()
     } else if (currentUserIndex > 0) {
       const prevUserIdx = currentUserIndex - 1
-      const prevStories = usersWithStories[prevUserIdx]?.stories || []
+      const prevStories = localGroups[prevUserIdx]?.stories || []
       setCurrentUserIndex(prevUserIdx)
       setCurrentStoryIndex(Math.max(0, prevStories.length - 1))
       elapsedBeforePauseRef.current = 0
       storyStartTimeRef.current = Date.now()
     }
-  }, [currentStoryIndex, currentUserIndex, usersWithStories])
+  }, [currentStoryIndex, currentUserIndex, localGroups])
+
+  // Pausar y reanudar temporizador
+  const pauseStory = useCallback(() => {
+    if (isPaused) return
+    const elapsed = Date.now() - storyStartTimeRef.current
+    elapsedBeforePauseRef.current += elapsed
+    setIsPaused(true)
+  }, [isPaused])
+
+  const resumeStory = useCallback(() => {
+    if (showViewersModal || showDeleteConfirm) return
+    if (!isPaused) return
+    setIsPaused(false)
+  }, [showViewersModal, showDeleteConfirm, isPaused])
+
+  // Eliminar historia activa
+  const handleDeleteStory = async () => {
+    if (!currentStory?.id || !currentUserId || isDeleting) return
+    setIsDeleting(true)
+
+    try {
+      const storyIdToDelete = currentStory.id
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData?.session?.access_token
+
+      const res = await fetch(
+        `/api/stories?storyId=${storyIdToDelete}&userId=${currentUserId}`,
+        {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        }
+      )
+
+      const data = await res.json().catch(() => null)
+
+      if (res.ok && data?.success) {
+        // Notificar callback al padre
+        if (onStoryDeleted) {
+          onStoryDeleted(storyIdToDelete, currentUserId)
+        }
+
+        const remainingStories = activeStories.filter((s) => s.id !== storyIdToDelete)
+
+        if (remainingStories.length > 0) {
+          // Quedan más historias del usuario actual
+          setLocalGroups((prev) =>
+            prev.map((grp, idx) =>
+              idx === currentUserIndex ? { ...grp, stories: remainingStories } : grp
+            )
+          )
+          const nextStoryIdx = Math.min(currentStoryIndex, remainingStories.length - 1)
+          setCurrentStoryIndex(nextStoryIdx)
+          elapsedBeforePauseRef.current = 0
+          storyStartTimeRef.current = Date.now()
+          setShowDeleteConfirm(false)
+          setShowViewersModal(false)
+          setIsDeleting(false)
+          setIsPaused(false)
+        } else {
+          // No quedan historias para este usuario
+          const remainingGroups = localGroups.filter((_, idx) => idx !== currentUserIndex)
+          if (remainingGroups.length > 0) {
+            setLocalGroups(remainingGroups)
+            const nextUserIdx = Math.min(currentUserIndex, remainingGroups.length - 1)
+            setCurrentUserIndex(nextUserIdx)
+            setCurrentStoryIndex(0)
+            elapsedBeforePauseRef.current = 0
+            storyStartTimeRef.current = Date.now()
+            setShowDeleteConfirm(false)
+            setShowViewersModal(false)
+            setIsDeleting(false)
+            setIsPaused(false)
+          } else {
+            // No queda ninguna historia activa
+            setShowDeleteConfirm(false)
+            setShowViewersModal(false)
+            setIsDeleting(false)
+            onClose()
+          }
+        }
+      } else {
+        alert(data?.error || 'No se pudo eliminar la historia. Inténtalo de nuevo.')
+        setIsDeleting(false)
+      }
+    } catch (err: any) {
+      console.error('Error deleting story:', err)
+      alert('Error de conexión al eliminar la historia.')
+      setIsDeleting(false)
+    }
+  }
 
   // Registrar visualización cuando un amigo ve una historia ajena
   useEffect(() => {
@@ -194,21 +300,7 @@ export default function StoryViewerModal({
     return () => {
       if (storyTimerRef.current) clearTimeout(storyTimerRef.current)
     }
-  }, [currentUserIndex, currentStoryIndex, isPaused, isDragging, isClosing, showViewersModal, currentStory, handleNext])
-
-  // Pausar y reanudar temporizador
-  const pauseStory = () => {
-    if (isPaused) return
-    const elapsed = Date.now() - storyStartTimeRef.current
-    elapsedBeforePauseRef.current += elapsed
-    setIsPaused(true)
-  }
-
-  const resumeStory = () => {
-    if (showViewersModal) return
-    if (!isPaused) return
-    setIsPaused(false)
-  }
+  }, [currentUserIndex, currentStoryIndex, isPaused, isDragging, isClosing, showViewersModal, showDeleteConfirm, currentStory, handleNext])
 
   // GESTO DESLIZAR (Touch Events para dismiss hacia abajo o abrir viewers hacia arriba)
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -532,14 +624,32 @@ export default function StoryViewerModal({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors flex items-center justify-center backdrop-blur-md border border-white/10 cursor-pointer"
-            aria-label="Cerrar historia"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            {isOwnStory && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  pauseStory()
+                  setShowDeleteConfirm(true)
+                }}
+                className="w-8 h-8 rounded-full bg-red-500/20 text-red-300 hover:bg-red-500/35 active:scale-90 transition-all flex items-center justify-center backdrop-blur-md border border-red-500/30 cursor-pointer shadow-sm"
+                aria-label="Eliminar historia"
+                title="Eliminar esta historia"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-8 h-8 rounded-full bg-black/40 text-white hover:bg-black/60 transition-colors flex items-center justify-center backdrop-blur-md border border-white/10 cursor-pointer"
+              aria-label="Cerrar historia"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </header>
 
         {/* ESPACIADOR CENTRAL */}
@@ -824,6 +934,83 @@ export default function StoryViewerModal({
                     )
                   })
                 )}
+              </div>
+
+              {/* Botón de eliminar historia en el panel de vistas */}
+              <div className="p-3.5 border-t border-white/10 bg-[#16241C]/90">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowViewersModal(false)
+                    setShowDeleteConfirm(true)
+                  }}
+                  className="w-full py-2.5 px-4 rounded-2xl bg-red-500/15 hover:bg-red-500/25 active:scale-[0.98] border border-red-500/30 text-red-300 text-xs font-semibold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Eliminar esta historia</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ============================================================== */}
+        {/* MODAL DE CONFIRMACIÓN DE ELIMINACIÓN                          */}
+        {/* ============================================================== */}
+        {showDeleteConfirm && (
+          <div
+            className="absolute inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200 pointer-events-auto"
+            onClick={(e) => {
+              e.stopPropagation()
+              if (!isDeleting) {
+                setShowDeleteConfirm(false)
+                resumeStory()
+              }
+            }}
+          >
+            <div
+              className="w-full max-w-xs bg-[#121B16] border border-red-500/35 rounded-[28px] p-5 shadow-2xl flex flex-col items-center text-center space-y-4 animate-in zoom-in-95 duration-200"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="w-12 h-12 rounded-full bg-red-500/15 border border-red-500/30 flex items-center justify-center text-red-400 shadow-inner">
+                <Trash2 className="w-6 h-6" />
+              </div>
+
+              <div className="space-y-1.5">
+                <h3 className="text-[15px] font-bold text-[#F1EEE2]">¿Eliminar historia?</h3>
+                <p className="text-[11.5px] text-[#A9BBA4] leading-relaxed">
+                  Esta foto se eliminará definitivamente y tus amigos ya no podrán verla.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2.5 w-full pt-1">
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={() => {
+                    setShowDeleteConfirm(false)
+                    resumeStory()
+                  }}
+                  className="flex-1 py-2.5 rounded-xl bg-white/10 hover:bg-white/15 active:scale-95 text-xs font-semibold text-[#F1EEE2] transition-all cursor-pointer disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={handleDeleteStory}
+                  className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 active:scale-95 text-xs font-semibold text-white transition-all shadow-md flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  {isDeleting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Borrando...</span>
+                    </>
+                  ) : (
+                    <span>Eliminar</span>
+                  )}
+                </button>
               </div>
             </div>
           </div>

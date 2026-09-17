@@ -2019,6 +2019,23 @@ export default function FriendsDashboard() {
           onSendCheer={(targetUserId, reaction) => {
             showToast(`✨ Reacción enviada a tu compañero: ${reaction}`)
           }}
+          onStoryDeleted={(deletedStoryId, authorUserId) => {
+            setStoriesUsers((prev) => {
+              return prev
+                .map((userGrp) => {
+                  if (userGrp.userId === authorUserId) {
+                    return {
+                      ...userGrp,
+                      stories: userGrp.stories.filter((s) => s.id !== deletedStoryId),
+                    }
+                  }
+                  return userGrp
+                })
+                .filter((userGrp) => userGrp.stories.length > 0)
+            })
+            if (userId) loadStoriesData(userId)
+            showToast('🗑️ Historia eliminada correctamente.')
+          }}
         />
       )}
     </div>
