@@ -15,6 +15,9 @@ import {
   ChevronUp,
   Users,
   Trash2,
+  Copy,
+  Check,
+  AlertCircle,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
@@ -58,6 +61,44 @@ interface StoryViewerModalProps {
 }
 
 const STORY_DURATION_MS = 5000
+
+export const STORY_VIEWS_SQL = `-- Ejecutar en Supabase -> SQL Editor para persistencia permanente de visualizaciones:
+CREATE TABLE IF NOT EXISTS public.story_views (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    story_id UUID NOT NULL REFERENCES public.stories(id) ON DELETE CASCADE,
+    viewer_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    viewed_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
+    CONSTRAINT unique_story_viewer UNIQUE (story_id, viewer_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_story_views_story_id ON public.story_views(story_id);
+CREATE INDEX IF NOT EXISTS idx_story_views_viewer_id ON public.story_views(viewer_id);
+CREATE INDEX IF NOT EXISTS idx_story_views_viewed_at ON public.story_views(viewed_at DESC);
+
+ALTER TABLE public.story_views ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Story owners and viewers can see story views" ON public.story_views;
+CREATE POLICY "Story owners and viewers can see story views"
+    ON public.story_views FOR SELECT TO authenticated
+    USING (
+        auth.uid() = viewer_id
+        OR EXISTS (
+            SELECT 1 FROM public.stories
+            WHERE public.stories.id = public.story_views.story_id
+              AND public.stories.user_id = auth.uid()
+        )
+    );
+
+DROP POLICY IF EXISTS "Users can record their own story views" ON public.story_views;
+CREATE POLICY "Users can record their own story views"
+    ON public.story_views FOR INSERT TO authenticated
+    WITH CHECK (auth.uid() = viewer_id);
+
+DROP POLICY IF EXISTS "Users can update their own story views" ON public.story_views;
+CREATE POLICY "Users can update their own story views"
+    ON public.story_views FOR UPDATE TO authenticated
+    USING (auth.uid() = viewer_id);
+`
 
 export default function StoryViewerModal({
   initialUserIndex,
@@ -244,20 +285,57 @@ export default function StoryViewerModal({
     }
   }
 
+  // Estado para indicar si la tabla story_views falta en Supabase
+  const [tableMissingInSupabase, setTableMissingInSupabase] = useState<boolean>(false)
+  const [copiedSql, setCopiedSql] = useState<boolean>(false)
+
+  const handleCopySql = () => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(STORY_VIEWS_SQL)
+      setCopiedSql(true)
+      setTimeout(() => setCopiedSql(false), 3000)
+    }
+  }
+
   // Consultar lista de visualizadores de la historia
   const fetchStoryViewers = useCallback(async (storyId: string) => {
     if (!storyId) return
     setIsLoadingViewers(true)
 
+    // 1. Cargar primero de caché local (persistencia inmediata sin tablas)
     try {
-      // 1. Consulta directa con cliente Supabase autenticado
+      const cached = localStorage.getItem(`exhala_story_views_${storyId}`)
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setLiveViewers((prev) => {
+            const map = new Map<string, StoryViewerInfo>()
+            prev.forEach((v) => map.set(v.id, v))
+            parsed.forEach((v: StoryViewerInfo) => map.set(v.id, v))
+            return Array.from(map.values())
+          })
+        }
+      }
+    } catch {}
+
+    try {
+      // 2. Consulta directa con cliente Supabase autenticado
       const { data: viewsData, error: viewsErr } = await supabase
         .from('story_views')
         .select('id, viewer_id, viewed_at')
         .eq('story_id', storyId)
         .order('viewed_at', { ascending: false })
 
-      if (!viewsErr && viewsData && viewsData.length > 0) {
+      if (viewsErr) {
+        if (
+          viewsErr.code === 'PGRST205' ||
+          viewsErr.message?.toLowerCase().includes('schema cache') ||
+          viewsErr.message?.toLowerCase().includes('does not exist')
+        ) {
+          setTableMissingInSupabase(true)
+        }
+      } else if (viewsData && viewsData.length > 0) {
+        setTableMissingInSupabase(false)
         const viewerIds = viewsData.map((v) => v.viewer_id)
         const { data: profiles } = await supabase
           .from('profiles')
@@ -289,12 +367,21 @@ export default function StoryViewerModal({
           }
         })
 
-        setLiveViewers(formatted)
+        setLiveViewers((prev) => {
+          const map = new Map<string, StoryViewerInfo>()
+          prev.forEach((v) => map.set(v.id, v))
+          formatted.forEach((v) => map.set(v.id, v))
+          const merged = Array.from(map.values())
+          try {
+            localStorage.setItem(`exhala_story_views_${storyId}`, JSON.stringify(merged))
+          } catch {}
+          return merged
+        })
         setIsLoadingViewers(false)
         return
       }
 
-      // 2. Respaldo a través del endpoint API con Bearer Token
+      // 3. Respaldo a través del endpoint API con Bearer Token
       const { data: sessionData } = await supabase.auth.getSession()
       const token = sessionData?.session?.access_token
 
@@ -303,8 +390,20 @@ export default function StoryViewerModal({
       })
       if (res.ok) {
         const data = await res.json()
-        if (data.success && Array.isArray(data.viewers)) {
-          setLiveViewers(data.viewers)
+        if (data.tableMissing) {
+          setTableMissingInSupabase(true)
+        }
+        if (data.success && Array.isArray(data.viewers) && data.viewers.length > 0) {
+          setLiveViewers((prev) => {
+            const map = new Map<string, StoryViewerInfo>()
+            prev.forEach((v) => map.set(v.id, v))
+            data.viewers.forEach((v: StoryViewerInfo) => map.set(v.id, v))
+            const merged = Array.from(map.values())
+            try {
+              localStorage.setItem(`exhala_story_views_${storyId}`, JSON.stringify(merged))
+            } catch {}
+            return merged
+          })
         }
       }
     } catch (err) {
@@ -324,7 +423,41 @@ export default function StoryViewerModal({
 
       const recordView = async () => {
         const nowIso = new Date().toISOString()
-        // 1. Inserción directa con Supabase client
+        const myName = currentUserName || 'Un amigo'
+        const initials =
+          myName
+            .split(' ')
+            .filter(Boolean)
+            .map((w: string) => w[0])
+            .join('')
+            .slice(0, 2)
+            .toUpperCase() || 'AM'
+
+        const viewerObj: StoryViewerInfo = {
+          id: currentUserId,
+          name: myName,
+          initials,
+          role: 'smoker',
+          viewedAt: nowIso,
+        }
+
+        // 1. Broadcast en tiempo real (Canal Global - entrega instantánea garantizada)
+        try {
+          const syncChannel = supabase.channel('exhala-story-views-channel')
+          syncChannel.send({
+            type: 'broadcast',
+            event: 'story_viewed',
+            payload: {
+              storyId: currentStory.id,
+              authorId: activeUser.userId,
+              viewer: viewerObj,
+            },
+          }).catch(() => {})
+        } catch (e) {
+          console.warn('Notice broadcast story view:', e)
+        }
+
+        // 2. Inserción directa con Supabase client en tabla story_views
         try {
           await supabase
             .from('story_views')
@@ -340,7 +473,7 @@ export default function StoryViewerModal({
           console.warn('Notice direct client story view record:', e)
         }
 
-        // 2. Respaldo por endpoint API con Bearer Token
+        // 3. Respaldo por endpoint API con Bearer Token
         try {
           const { data: sessionData } = await supabase.auth.getSession()
           const token = sessionData?.session?.access_token
@@ -363,7 +496,7 @@ export default function StoryViewerModal({
 
       recordView()
     }
-  }, [currentStory?.id, currentUserId, activeUser?.userId])
+  }, [currentStory?.id, currentUserId, activeUser?.userId, currentUserName])
 
   // Cargar visualizadores y suscribirse a Realtime si es historia propia
   useEffect(() => {
@@ -371,10 +504,35 @@ export default function StoryViewerModal({
 
     fetchStoryViewers(currentStory.id)
 
-    // Canal Realtime para recibir nuevas visualizaciones al instante
-    const channelName = `story-live-views-${currentStory.id}-${Date.now()}`
-    const channel = supabase
-      .channel(channelName)
+    // 1. Canal Broadcast para recepción instantánea de nuevos espectadores
+    const broadcastChannel = supabase
+      .channel(`story-live-sync-${currentStory.id}-${Date.now()}`)
+      .on(
+        'broadcast',
+        { event: 'story_viewed' },
+        (payload: any) => {
+          const data = payload?.payload
+          if (data && data.storyId === currentStory.id && data.viewer) {
+            setLiveViewers((prev) => {
+              const exists = prev.some((v) => v.id === data.viewer.id)
+              if (exists) return prev
+              const updated = [data.viewer, ...prev]
+              try {
+                localStorage.setItem(
+                  `exhala_story_views_${currentStory.id}`,
+                  JSON.stringify(updated)
+                )
+              } catch {}
+              return updated
+            })
+          }
+        }
+      )
+      .subscribe()
+
+    // 2. Canal Realtime postgres_changes para cuando la tabla exista en Supabase
+    const dbChannel = supabase
+      .channel(`story-db-views-${currentStory.id}-${Date.now()}`)
       .on(
         'postgres_changes',
         {
@@ -390,7 +548,8 @@ export default function StoryViewerModal({
       .subscribe()
 
     return () => {
-      supabase.removeChannel(channel)
+      supabase.removeChannel(broadcastChannel)
+      supabase.removeChannel(dbChannel)
     }
   }, [currentStory?.id, isOwnStory, fetchStoryViewers])
 
@@ -980,6 +1139,27 @@ export default function StoryViewerModal({
                     <X className="w-4 h-4" />
                   </button>
                 </div>
+
+                {/* Banner informativo si la tabla en Supabase está pendiente */}
+                {tableMissingInSupabase && (
+                  <div className="w-full mt-2.5 p-3 rounded-2xl bg-[#E8B75E]/10 border border-[#E8B75E]/30 text-left space-y-2">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-[#E8B75E]">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>Tabla de base de datos pendiente</span>
+                    </div>
+                    <p className="text-[11px] text-[#F1EEE2]/85 leading-relaxed">
+                      Las visitas en vivo se registran automáticamente. Para guardarlas para siempre en tu base de datos Supabase, pulsa para copiar el script SQL y pégalo en el SQL Editor de tu consola Supabase:
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleCopySql}
+                      className="w-full py-2 px-3 rounded-xl bg-[#E8B75E]/20 hover:bg-[#E8B75E]/30 active:scale-95 text-[#E8B75E] text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                    >
+                      {copiedSql ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedSql ? '¡Código SQL copiado!' : 'Copiar script SQL para Supabase'}</span>
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Lista de amigos que han visto la historia */}

@@ -32,8 +32,14 @@ export async function GET(request: Request) {
 
     if (viewsError) {
       console.warn('[Stories VIEW GET API] Notice:', viewsError.message)
+      const isTableMissing =
+        viewsError.code === 'PGRST205' ||
+        viewsError.message?.toLowerCase().includes('schema cache') ||
+        viewsError.message?.toLowerCase().includes('does not exist')
+
       return NextResponse.json({
         success: true,
+        tableMissing: isTableMissing,
         viewers: [],
         viewsCount: 0,
       })

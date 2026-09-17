@@ -720,6 +720,54 @@ export default function FriendsDashboard() {
           )
           .subscribe()
 
+        // Realtime para visualizaciones de historias en directo
+        const storyViewsChannel = supabase
+          .channel(`story-views-sync-global-${Date.now()}`)
+          .on(
+            'broadcast',
+            { event: 'story_viewed' },
+            (payload: any) => {
+              const data = payload?.payload
+              if (data && data.authorId === activeUserId && data.storyId && data.viewer) {
+                try {
+                  const key = `exhala_story_views_${data.storyId}`
+                  const existingRaw = localStorage.getItem(key)
+                  const existing = existingRaw ? JSON.parse(existingRaw) : []
+                  const already = existing.some((v: any) => v.id === data.viewer.id)
+                  if (!already) {
+                    existing.unshift(data.viewer)
+                    localStorage.setItem(key, JSON.stringify(existing))
+                  }
+                } catch {}
+
+                setStoriesUsers((prev) =>
+                  prev.map((userGrp) => {
+                    if (userGrp.userId === activeUserId) {
+                      return {
+                        ...userGrp,
+                        stories: userGrp.stories.map((st) => {
+                          if (st.id === data.storyId) {
+                            const curViewers = st.viewers || []
+                            const exists = curViewers.some((v) => v.id === data.viewer.id)
+                            const updated = exists ? curViewers : [data.viewer, ...curViewers]
+                            return {
+                              ...st,
+                              viewers: updated,
+                              viewsCount: updated.length,
+                            }
+                          }
+                          return st
+                        }),
+                      }
+                    }
+                    return userGrp
+                  })
+                )
+              }
+            }
+          )
+          .subscribe()
+
         const unreadInterval = setInterval(() => {
           if (typeof document !== 'undefined' && document.hidden) return
           loadUnreadCounts(activeUserId)
@@ -744,6 +792,7 @@ export default function FriendsDashboard() {
           supabase.removeChannel(inboxChannel)
           supabase.removeChannel(plantChannel)
           supabase.removeChannel(groupChannel)
+          supabase.removeChannel(storyViewsChannel)
         }
       } catch (err) {
         console.error('Error initializing friends page:', err)
