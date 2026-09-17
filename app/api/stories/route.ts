@@ -48,17 +48,58 @@ export async function GET(request: Request) {
       return NextResponse.json({ success: true, users: [] })
     }
 
-    // 2. Obtener perfiles de los autores de las historias
+    // 2. Obtener visualizaciones de las historias activas
+    const storyIds = dbStories.map((s) => s.id)
+    const { data: dbStoryViews, error: viewsError } = await supabase
+      .from('story_views')
+      .select('id, story_id, viewer_id, viewed_at')
+      .in('story_id', storyIds)
+      .order('viewed_at', { ascending: false })
+
+    if (viewsError) {
+      console.warn('[Stories GET API] Story views notice:', viewsError.message)
+    }
+
+    // 3. Obtener perfiles de autores y de visualizadores
     const authorIds = Array.from(new Set(dbStories.map((s) => s.user_id)))
+    const viewerIds = Array.from(new Set(dbStoryViews?.map((v) => v.viewer_id) || []))
+    const allProfileIds = Array.from(new Set([...authorIds, ...viewerIds]))
+
     const { data: profiles } = await supabase
       .from('profiles')
       .select('id, full_name, role, avatar_url')
-      .in('id', authorIds)
+      .in('id', allProfileIds)
 
     const profileMap = new Map<string, any>()
     profiles?.forEach((p) => profileMap.set(p.id, p))
 
-    // 3. Agrupar historias por autor
+    // 4. Mapear visualizaciones por historia
+    const storyViewsMap = new Map<string, any[]>()
+    dbStoryViews?.forEach((v) => {
+      if (!storyViewsMap.has(v.story_id)) {
+        storyViewsMap.set(v.story_id, [])
+      }
+      const vProf = profileMap.get(v.viewer_id)
+      const fullName = vProf?.full_name || 'Compañero'
+      const initials = fullName
+        .split(' ')
+        .filter(Boolean)
+        .map((n: string) => n[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase() || 'AM'
+
+      storyViewsMap.get(v.story_id)!.push({
+        id: v.viewer_id,
+        name: fullName,
+        initials,
+        avatarUrl: vProf?.avatar_url || null,
+        role: vProf?.role || 'smoker',
+        viewedAt: v.viewed_at,
+      })
+    })
+
+    // 5. Agrupar historias por autor
     const userMap: Record<string, any> = {}
 
     dbStories.forEach((st) => {
@@ -68,10 +109,11 @@ export async function GET(request: Request) {
         const fullName = prof?.full_name || 'Compañero'
         const initials = fullName
           .split(' ')
+          .filter(Boolean)
           .map((n: string) => n[0])
           .join('')
           .slice(0, 2)
-          .toUpperCase()
+          .toUpperCase() || 'AM'
 
         userMap[uId] = {
           userId: uId,
@@ -82,12 +124,16 @@ export async function GET(request: Request) {
         }
       }
 
+      const viewersList = storyViewsMap.get(st.id) || []
+
       userMap[uId].stories.push({
         id: st.id,
         mediaUrl: st.media_url,
         caption: st.caption,
         createdAt: st.created_at,
         expiresAt: st.expires_at,
+        viewers: viewersList,
+        viewsCount: viewersList.length,
       })
     })
 

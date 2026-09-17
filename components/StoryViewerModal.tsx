@@ -1,10 +1,32 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Clock, Send, Loader2, Heart, Droplets, Sparkles, Flame, Shield } from 'lucide-react'
+import {
+  X,
+  Clock,
+  Send,
+  Loader2,
+  Heart,
+  Droplets,
+  Sparkles,
+  Flame,
+  Shield,
+  Eye,
+  ChevronUp,
+  Users,
+} from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
 import { dispatchPushMessageToFriend } from '@/lib/push-notifications'
+
+export interface StoryViewerInfo {
+  id: string
+  name: string
+  initials: string
+  avatarUrl?: string | null
+  role?: 'smoker' | 'friend'
+  viewedAt: string
+}
 
 export interface StoryItem {
   id: string
@@ -12,6 +34,8 @@ export interface StoryItem {
   caption?: string | null
   createdAt: string
   expiresAt: string
+  viewers?: StoryViewerInfo[]
+  viewsCount?: number
 }
 
 export interface UserStoriesGroup {
@@ -46,6 +70,14 @@ export default function StoryViewerModal({
   const [isPaused, setIsPaused] = useState<boolean>(false)
   const [cheerFeedback, setCheerFeedback] = useState<string | null>(null)
 
+  // Drawer / Bottom Sheet de visualizaciones para historias propias
+  const [showViewersModal, setShowViewersModal] = useState<boolean>(false)
+  const [liveViewers, setLiveViewers] = useState<StoryViewerInfo[]>([])
+  const [isLoadingViewers, setIsLoadingViewers] = useState<boolean>(false)
+
+  // Registro de visualizaciones ya enviadas en la sesión
+  const recordedViewsRef = useRef<Set<string>>(new Set())
+
   // Estados para deslizamiento hacia abajo (Swipe down to dismiss)
   const [dragY, setDragY] = useState<number>(0)
   const [isDragging, setIsDragging] = useState<boolean>(false)
@@ -61,6 +93,16 @@ export default function StoryViewerModal({
   const activeUser = usersWithStories[currentUserIndex] || null
   const activeStories = activeUser?.stories || []
   const currentStory = activeStories[currentStoryIndex] || null
+  const isOwnStory = activeUser?.userId === currentUserId
+
+  // Sincronizar los viewers de la historia activa
+  useEffect(() => {
+    if (currentStory?.viewers) {
+      setLiveViewers(currentStory.viewers)
+    } else {
+      setLiveViewers([])
+    }
+  }, [currentStory?.id, currentStory?.viewers])
 
   // Navegar a la siguiente historia o usuario
   const handleNext = useCallback(() => {
@@ -96,9 +138,45 @@ export default function StoryViewerModal({
     }
   }, [currentStoryIndex, currentUserIndex, usersWithStories])
 
-  // Temporizador ultra fluido por historia (sin renders cada 50ms)
+  // Registrar visualización cuando un amigo ve una historia ajena
   useEffect(() => {
-    if (isPaused || isDragging || isClosing || !currentStory) {
+    if (!currentStory?.id || !currentUserId) return
+    if (activeUser?.userId === currentUserId) return // No registrar visualización propia
+
+    if (!recordedViewsRef.current.has(currentStory.id)) {
+      recordedViewsRef.current.add(currentStory.id)
+      fetch('/api/stories/view', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          storyId: currentStory.id,
+          viewerId: currentUserId,
+        }),
+      }).catch((err) => {
+        console.warn('Notice recording story view:', err)
+      })
+    }
+  }, [currentStory?.id, currentUserId, activeUser?.userId])
+
+  // Consultar lista en tiempo real de visualizadores si abre el modal de 'Visto por'
+  useEffect(() => {
+    if (showViewersModal && currentStory?.id && isOwnStory) {
+      setIsLoadingViewers(true)
+      fetch(`/api/stories/view?storyId=${currentStory.id}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.viewers)) {
+            setLiveViewers(data.viewers)
+          }
+        })
+        .catch((err) => console.warn('Notice fetching real-time viewers:', err))
+        .finally(() => setIsLoadingViewers(false))
+    }
+  }, [showViewersModal, currentStory?.id, isOwnStory])
+
+  // Temporizador ultra fluido por historia
+  useEffect(() => {
+    if (isPaused || isDragging || isClosing || showViewersModal || !currentStory) {
       if (storyTimerRef.current) clearTimeout(storyTimerRef.current)
       return
     }
@@ -116,7 +194,7 @@ export default function StoryViewerModal({
     return () => {
       if (storyTimerRef.current) clearTimeout(storyTimerRef.current)
     }
-  }, [currentUserIndex, currentStoryIndex, isPaused, isDragging, isClosing, currentStory, handleNext])
+  }, [currentUserIndex, currentStoryIndex, isPaused, isDragging, isClosing, showViewersModal, currentStory, handleNext])
 
   // Pausar y reanudar temporizador
   const pauseStory = () => {
@@ -127,11 +205,12 @@ export default function StoryViewerModal({
   }
 
   const resumeStory = () => {
+    if (showViewersModal) return
     if (!isPaused) return
     setIsPaused(false)
   }
 
-  // GESTO DESLIZAR HACIA ABAJO (Touch Events)
+  // GESTO DESLIZAR (Touch Events para dismiss hacia abajo o abrir viewers hacia arriba)
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartY.current = e.touches[0].clientY
     touchStartX.current = e.touches[0].clientX
@@ -145,38 +224,65 @@ export default function StoryViewerModal({
     const deltaY = currentY - touchStartY.current
     const deltaX = currentX - touchStartX.current
 
-    // Detectar si el usuario está deslizando verticalmente
     if (isVerticalSwipe.current === null) {
       if (Math.abs(deltaY) > 8 || Math.abs(deltaX) > 8) {
         isVerticalSwipe.current = Math.abs(deltaY) > Math.abs(deltaX)
       }
     }
 
-    if (isVerticalSwipe.current && deltaY > 0) {
-      // Solo arrastrar hacia abajo con amortiguación
+    if (isVerticalSwipe.current && deltaY > 0 && !showViewersModal) {
+      // Arrastrar hacia abajo para descartar
       setIsDragging(true)
       setDragY(deltaY)
     }
   }
 
-  const handleTouchEnd = () => {
-    resumeStory()
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    const endY = e.changedTouches?.[0]?.clientY ?? touchStartY.current
+    const deltaY = endY - touchStartY.current
+
     if (isDragging) {
       setIsDragging(false)
       if (dragY > 90) {
-        // Deslizado suficiente: cerrar con animación
         setIsClosing(true)
         setTimeout(() => {
           onClose()
         }, 220)
+        return
       } else {
-        // Regresar a posición original suavemente
         setDragY(0)
       }
     }
+
+    // Deslizar hacia arriba en historia propia para abrir panel de vistas
+    if (isOwnStory && deltaY < -40 && !showViewersModal) {
+      pauseStory()
+      setShowViewersModal(true)
+      return
+    }
+
+    if (!showViewersModal) {
+      resumeStory()
+    }
   }
 
-  // Calcular etiquetas de tiempo
+  // Formatear tiempo relativo
+  const formatRelativeTime = (isoString?: string) => {
+    if (!isoString) return 'Hace un momento'
+    try {
+      const diffMs = Date.now() - new Date(isoString).getTime()
+      const diffMins = Math.floor(diffMs / (1000 * 60))
+      if (diffMins < 1) return 'Hace un momento'
+      if (diffMins < 60) return `Hace ${diffMins} min`
+      const diffHours = Math.floor(diffMins / 60)
+      if (diffHours < 24) return `Hace ${diffHours}h`
+      return 'Hace 1d'
+    } catch {
+      return 'Hace poco'
+    }
+  }
+
+  // Calcular etiquetas de tiempo de la historia
   const getTimeLabels = (createdAtIso?: string, expiresAtIso?: string) => {
     if (!createdAtIso) return { timeAgo: 'Reciente', remaining: '24h' }
     try {
@@ -215,7 +321,6 @@ export default function StoryViewerModal({
   // Estado para contestar abajo estilo Instagram y enviar directo al chat
   const [replyText, setReplyText] = useState<string>('')
   const [isSendingReply, setIsSendingReply] = useState<boolean>(false)
-  const isOwnStory = activeUser?.userId === currentUserId
 
   const handleSendReply = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
@@ -297,6 +402,9 @@ export default function StoryViewerModal({
   const opacity = Math.max(0.3, 1 - dragY / 350)
   const backdropOpacity = Math.max(0, 1 - dragY / 250)
 
+  // Cantidad total de visualizaciones activas
+  const totalViewsCount = liveViewers.length > 0 ? liveViewers.length : (currentStory.viewsCount || 0)
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 select-none touch-none"
@@ -340,7 +448,7 @@ export default function StoryViewerModal({
             className="w-full h-full object-cover pointer-events-none"
           />
           <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/80 via-black/35 to-transparent pointer-events-none" />
-          <div className="absolute inset-x-0 bottom-0 h-44 bg-gradient-to-t from-black/90 via-black/45 to-transparent pointer-events-none" />
+          <div className="absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/95 via-black/60 to-transparent pointer-events-none" />
         </div>
 
         {/* ============================================================== */}
@@ -358,14 +466,14 @@ export default function StoryViewerModal({
             className="w-1/3 h-full cursor-pointer"
             onClick={(e) => {
               e.stopPropagation()
-              if (!isDragging) handlePrev()
+              if (!isDragging && !showViewersModal) handlePrev()
             }}
           />
           <div
             className="w-2/3 h-full cursor-pointer"
             onClick={(e) => {
               e.stopPropagation()
-              if (!isDragging) handleNext()
+              if (!isDragging && !showViewersModal) handleNext()
             }}
           />
         </div>
@@ -390,7 +498,7 @@ export default function StoryViewerModal({
                     animation: isCurrent
                       ? `storyFillAnim ${STORY_DURATION_MS}ms linear forwards`
                       : 'none',
-                    animationPlayState: isPaused || isDragging ? 'paused' : 'running',
+                    animationPlayState: isPaused || isDragging || showViewersModal ? 'paused' : 'running',
                   }}
                 />
               </div>
@@ -456,15 +564,70 @@ export default function StoryViewerModal({
         )}
 
         {/* ============================================================== */}
-        {/* BARRA DE RESPUESTA DIRECTA AL CHAT (ESTILO INSTAGRAM)         */}
+        {/* BARRA INFERIOR: RESPUESTA O VISOR DE AMIGOS (ESTILO INSTAGRAM) */}
         {/* ============================================================== */}
-        <footer className="relative z-20 p-3 pt-2 pb-4 border-t border-white/10 bg-black/60 backdrop-blur-lg pointer-events-auto">
+        <footer className="relative z-20 p-3 pt-2 pb-4 border-t border-white/10 bg-black/70 backdrop-blur-xl pointer-events-auto">
           {isOwnStory ? (
-            <div className="flex items-center justify-between text-xs text-[#A9BBA4] px-2 py-1">
-              <span className="font-medium text-[#E8B75E]">Tu historia</span>
-              <span className="text-[11px] text-[#7C9481]">Visible para tus amigos por 24h</span>
+            /* ============================================================ */
+            /* BARRA INTERACTIVA 'VISTO POR...' PARA LA HISTORIA PROPIA      */
+            /* ============================================================ */
+            <div
+              onClick={() => {
+                pauseStory()
+                setShowViewersModal(true)
+              }}
+              className="group flex items-center justify-between p-2.5 rounded-2xl bg-white/[0.08] hover:bg-white/[0.14] active:scale-[0.98] border border-[rgba(232,183,94,0.3)] transition-all cursor-pointer shadow-lg backdrop-blur-md"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                {/* Pila de avatares superpuestos si hay amigos que la vieron */}
+                {liveViewers.length > 0 ? (
+                  <div className="flex items-center -space-x-2 shrink-0">
+                    {liveViewers.slice(0, 3).map((v, idx) => (
+                      <div
+                        key={v.id + idx}
+                        className="w-6 h-6 rounded-full bg-gradient-to-br from-[#52B788] via-[#E8B75E] to-[#6FCB8A] text-[#1B1710] font-bold text-[9px] flex items-center justify-center border-2 border-[#16241C] shadow-sm shrink-0"
+                        title={v.name}
+                      >
+                        {v.initials}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="w-6 h-6 rounded-full bg-[rgba(232,183,94,0.15)] flex items-center justify-center text-[#E8B75E] shrink-0 border border-[rgba(232,183,94,0.3)]">
+                    <Eye className="w-3.5 h-3.5" />
+                  </div>
+                )}
+
+                <div className="flex flex-col text-left min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[12.5px] font-bold text-white truncate">
+                      {totalViewsCount === 0
+                        ? '0 visualizaciones'
+                        : totalViewsCount === 1
+                        ? '1 persona la vio'
+                        : `${totalViewsCount} personas la vieron`}
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#E8B75E]/20 text-[#E8B75E] font-medium shrink-0">
+                      Tu historia
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-[#A9BBA4] truncate">
+                    {totalViewsCount > 0
+                      ? 'Toca o desliza hacia arriba para ver la lista'
+                      : 'Visible para tus amigos durante 24 horas'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Botón / Flecha de deslizar */}
+              <div className="flex items-center gap-1 text-[#E8B75E] text-xs font-semibold pl-2 shrink-0">
+                <ChevronUp className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform" />
+              </div>
             </div>
           ) : (
+            /* ============================================================ */
+            /* BARRA DE RESPUESTA A HISTORIA DE AMIGO                        */
+            /* ============================================================ */
             <div className="space-y-2">
               <form
                 onSubmit={handleSendReply}
@@ -539,6 +702,132 @@ export default function StoryViewerModal({
             </div>
           )}
         </footer>
+
+        {/* ============================================================== */}
+        {/* MODAL / DRAWER BOTTOM SHEET DE 'VISTO POR...' ESTILO INSTAGRAM */}
+        {/* ============================================================== */}
+        {showViewersModal && (
+          <div
+            className="absolute inset-0 z-40 bg-black/75 backdrop-blur-xl flex flex-col justify-end animate-in fade-in duration-200"
+            onClick={(e) => {
+              e.stopPropagation()
+              setShowViewersModal(false)
+              resumeStory()
+            }}
+          >
+            <div
+              className="w-full max-h-[75%] bg-[#121B16] rounded-t-[30px] border-t border-[rgba(232,183,94,0.35)] shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-300 pointer-events-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Encabezado y barra para arrastrar */}
+              <div className="pt-3 pb-3 px-5 flex flex-col items-center border-b border-white/10 bg-[#16241C]/80">
+                <div className="w-11 h-1 rounded-full bg-white/30 mb-3" />
+                <div className="w-full flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-full bg-[rgba(232,183,94,0.15)] flex items-center justify-center text-[#E8B75E]">
+                      <Eye className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-[14px] font-bold text-[#F1EEE2]">
+                        Visto por {totalViewsCount} {totalViewsCount === 1 ? 'amigo' : 'amigos'}
+                      </h3>
+                      <p className="text-[10.5px] text-[#A9BBA4]">
+                        Personas que abrieron tu historia
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowViewersModal(false)
+                      resumeStory()
+                    }}
+                    className="w-7 h-7 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors flex items-center justify-center cursor-pointer"
+                    aria-label="Cerrar lista de espectadores"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Lista de amigos que han visto la historia */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-2.5 max-h-[380px] no-scrollbar">
+                {isLoadingViewers ? (
+                  <div className="py-10 flex flex-col items-center justify-center gap-2 text-white/60">
+                    <Loader2 className="w-6 h-6 animate-spin text-[#E8B75E]" />
+                    <span className="text-xs">Cargando espectadores...</span>
+                  </div>
+                ) : liveViewers.length === 0 ? (
+                  <div className="py-10 px-4 text-center flex flex-col items-center justify-center">
+                    <div className="w-12 h-12 rounded-full bg-[rgba(232,183,94,0.1)] border border-[rgba(232,183,94,0.2)] flex items-center justify-center text-[#E8B75E] mb-3">
+                      <Users className="w-6 h-6" />
+                    </div>
+                    <p className="text-[13.5px] font-semibold text-[#F1EEE2] mb-1">
+                      Aún no hay visualizaciones
+                    </p>
+                    <p className="text-[11.5px] text-[#A9BBA4] max-w-[240px] leading-relaxed">
+                      Cuando tus amigos abran tu historia de hoy, aparecerán aquí con la hora exacta en que la vieron.
+                    </p>
+                  </div>
+                ) : (
+                  liveViewers.map((viewer) => {
+                    const isSmoker = viewer.role === 'smoker'
+                    const roleLabel = isSmoker ? 'Compañero' : 'Guardián'
+                    const timeAgoStr = formatRelativeTime(viewer.viewedAt)
+
+                    return (
+                      <div
+                        key={viewer.id}
+                        className="flex items-center justify-between p-2.5 rounded-2xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] transition-all"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          {/* Avatar con gradiente botánico */}
+                          <div
+                            className={`w-10 h-10 rounded-full p-[2px] bg-gradient-to-tr ${
+                              isSmoker
+                                ? 'from-[#E8B75E] to-[#EFC471]'
+                                : 'from-[#52B788] to-[#A796D8]'
+                            } shrink-0`}
+                          >
+                            <div className="w-full h-full rounded-full bg-[#16241C] flex items-center justify-center font-bold text-xs text-[#F1EEE2]">
+                              {viewer.initials}
+                            </div>
+                          </div>
+
+                          <div className="min-w-0 text-left">
+                            <p className="text-[13px] font-semibold text-[#F1EEE2] truncate">
+                              {viewer.name}
+                            </p>
+                            <div className="flex items-center gap-1.5 text-[10.5px]">
+                              <span
+                                className={`px-1.5 py-0.2 rounded text-[9.5px] font-medium ${
+                                  isSmoker
+                                    ? 'bg-[#E8B75E]/20 text-[#E8B75E]'
+                                    : 'bg-[#52B788]/20 text-[#52B788]'
+                                }`}
+                              >
+                                {roleLabel}
+                              </span>
+                              <span className="text-[#A9BBA4]">·</span>
+                              <span className="text-[#A9BBA4]">{timeAgoStr}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Indicador de visto */}
+                        <div className="flex items-center gap-1 shrink-0 px-2 py-1 rounded-full bg-[#52B788]/10 text-[#52B788] text-[11px] font-medium border border-[#52B788]/20">
+                          <Eye className="w-3 h-3" />
+                          <span>Visto</span>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

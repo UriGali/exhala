@@ -428,6 +428,42 @@ export interface Database {
         }
         Relationships: []
       }
+      story_views: {
+        Row: {
+          id: string
+          story_id: string
+          viewer_id: string
+          viewed_at: string
+        }
+        Insert: {
+          id?: string
+          story_id: string
+          viewer_id: string
+          viewed_at?: string
+        }
+        Update: {
+          id?: string
+          story_id?: string
+          viewer_id?: string
+          viewed_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: 'story_views_story_id_fkey'
+            columns: ['story_id']
+            isOneToOne: false
+            referencedRelation: 'stories'
+            referencedSchema: 'public'
+          },
+          {
+            foreignKeyName: 'story_views_viewer_id_fkey'
+            columns: ['viewer_id']
+            isOneToOne: false
+            referencedRelation: 'profiles'
+            referencedSchema: 'public'
+          }
+        ]
+      }
       milestone_notifications: {
         Row: {
           id: string
@@ -514,6 +550,7 @@ export type Group = Tables<'groups'>
 export type GroupMember = Tables<'group_members'>
 export type GroupMessage = Tables<'group_messages'>
 export type Story = Tables<'stories'>
+export type StoryView = Tables<'story_views'>
 
 
 
