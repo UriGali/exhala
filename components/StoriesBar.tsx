@@ -12,7 +12,7 @@ interface StoriesBarProps {
   onOpenStoryViewer: (userIndex: number) => void
 }
 
-export default function StoriesBar({
+function StoriesBarComponent({
   currentUserId,
   currentUserName,
   usersWithStories,
@@ -170,3 +170,7 @@ export default function StoriesBar({
     </div>
   )
 }
+
+const StoriesBar = React.memo(StoriesBarComponent)
+export default StoriesBar
+

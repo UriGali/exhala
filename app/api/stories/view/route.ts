@@ -144,11 +144,25 @@ export async function POST(request: Request) {
       .select()
 
     if (insertError) {
-      console.warn('[Stories VIEW POST API] Insert notice:', insertError.message)
+      console.warn('[Stories VIEW POST API] Upsert notice, attempting direct insert:', insertError.message)
+      // Fallback a insert directo
+      const { data: insertFallback, error: fbError } = await supabase
+        .from('story_views')
+        .insert({
+          story_id: storyId,
+          viewer_id: viewerId,
+          viewed_at: nowIso,
+        })
+        .select()
+
+      if (fbError && !fbError.message.includes('unique')) {
+        console.warn('[Stories VIEW POST API] Fallback insert notice:', fbError.message)
+      }
+
       return NextResponse.json({
         success: true,
-        recorded: false,
-        notice: insertError.message,
+        recorded: !fbError,
+        view: insertFallback?.[0] || null,
       })
     }
 

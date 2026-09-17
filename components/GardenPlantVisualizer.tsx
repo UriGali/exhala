@@ -16,7 +16,7 @@ interface GardenPlantVisualizerProps {
   className?: string
 }
 
-export default function GardenPlantVisualizer({
+function GardenPlantVisualizerComponent({
   stage = 0,
   speciesIndex = 0,
   isWithering = false,
@@ -382,3 +382,7 @@ export default function GardenPlantVisualizer({
     </div>
   )
 }
+
+const GardenPlantVisualizer = React.memo(GardenPlantVisualizerComponent)
+export default GardenPlantVisualizer
+

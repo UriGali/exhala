@@ -244,6 +244,76 @@ export default function StoryViewerModal({
     }
   }
 
+  // Consultar lista de visualizadores de la historia
+  const fetchStoryViewers = useCallback(async (storyId: string) => {
+    if (!storyId) return
+    setIsLoadingViewers(true)
+
+    try {
+      // 1. Consulta directa con cliente Supabase autenticado
+      const { data: viewsData, error: viewsErr } = await supabase
+        .from('story_views')
+        .select('id, viewer_id, viewed_at')
+        .eq('story_id', storyId)
+        .order('viewed_at', { ascending: false })
+
+      if (!viewsErr && viewsData && viewsData.length > 0) {
+        const viewerIds = viewsData.map((v) => v.viewer_id)
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, full_name, avatar_url, role')
+          .in('id', viewerIds)
+
+        const profMap = new Map<string, any>()
+        profiles?.forEach((p) => profMap.set(p.id, p))
+
+        const formatted: StoryViewerInfo[] = viewsData.map((v) => {
+          const p = profMap.get(v.viewer_id)
+          const name = p?.full_name || 'Compañero'
+          const initials =
+            name
+              .split(' ')
+              .filter(Boolean)
+              .map((w: string) => w[0])
+              .join('')
+              .slice(0, 2)
+              .toUpperCase() || 'AM'
+
+          return {
+            id: v.viewer_id,
+            name,
+            initials,
+            avatarUrl: p?.avatar_url || null,
+            role: p?.role || 'smoker',
+            viewedAt: v.viewed_at,
+          }
+        })
+
+        setLiveViewers(formatted)
+        setIsLoadingViewers(false)
+        return
+      }
+
+      // 2. Respaldo a través del endpoint API con Bearer Token
+      const { data: sessionData } = await supabase.auth.getSession()
+      const token = sessionData?.session?.access_token
+
+      const res = await fetch(`/api/stories/view?storyId=${storyId}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && Array.isArray(data.viewers)) {
+          setLiveViewers(data.viewers)
+        }
+      }
+    } catch (err) {
+      console.warn('Error fetching real-time viewers:', err)
+    } finally {
+      setIsLoadingViewers(false)
+    }
+  }, [])
+
   // Registrar visualización cuando un amigo ve una historia ajena
   useEffect(() => {
     if (!currentStory?.id || !currentUserId) return
@@ -251,34 +321,85 @@ export default function StoryViewerModal({
 
     if (!recordedViewsRef.current.has(currentStory.id)) {
       recordedViewsRef.current.add(currentStory.id)
-      fetch('/api/stories/view', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          storyId: currentStory.id,
-          viewerId: currentUserId,
-        }),
-      }).catch((err) => {
-        console.warn('Notice recording story view:', err)
-      })
+
+      const recordView = async () => {
+        const nowIso = new Date().toISOString()
+        // 1. Inserción directa con Supabase client
+        try {
+          await supabase
+            .from('story_views')
+            .upsert(
+              {
+                story_id: currentStory.id,
+                viewer_id: currentUserId,
+                viewed_at: nowIso,
+              },
+              { onConflict: 'story_id,viewer_id' }
+            )
+        } catch (e) {
+          console.warn('Notice direct client story view record:', e)
+        }
+
+        // 2. Respaldo por endpoint API con Bearer Token
+        try {
+          const { data: sessionData } = await supabase.auth.getSession()
+          const token = sessionData?.session?.access_token
+
+          fetch('/api/stories/view', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify({
+              storyId: currentStory.id,
+              viewerId: currentUserId,
+            }),
+          }).catch((err) => {
+            console.warn('Notice recording story view via API:', err)
+          })
+        } catch {}
+      }
+
+      recordView()
     }
   }, [currentStory?.id, currentUserId, activeUser?.userId])
 
-  // Consultar lista en tiempo real de visualizadores si abre el modal de 'Visto por'
+  // Cargar visualizadores y suscribirse a Realtime si es historia propia
+  useEffect(() => {
+    if (!currentStory?.id || !isOwnStory) return
+
+    fetchStoryViewers(currentStory.id)
+
+    // Canal Realtime para recibir nuevas visualizaciones al instante
+    const channelName = `story-live-views-${currentStory.id}-${Date.now()}`
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'story_views',
+          filter: `story_id=eq.${currentStory.id}`,
+        },
+        () => {
+          fetchStoryViewers(currentStory.id)
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [currentStory?.id, isOwnStory, fetchStoryViewers])
+
+  // Si se abre el drawer de viewers, refrescar inmediatamente
   useEffect(() => {
     if (showViewersModal && currentStory?.id && isOwnStory) {
-      setIsLoadingViewers(true)
-      fetch(`/api/stories/view?storyId=${currentStory.id}`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.success && Array.isArray(data.viewers)) {
-            setLiveViewers(data.viewers)
-          }
-        })
-        .catch((err) => console.warn('Notice fetching real-time viewers:', err))
-        .finally(() => setIsLoadingViewers(false))
+      fetchStoryViewers(currentStory.id)
     }
-  }, [showViewersModal, currentStory?.id, isOwnStory])
+  }, [showViewersModal, currentStory?.id, isOwnStory, fetchStoryViewers])
 
   // Temporizador ultra fluido por historia
   useEffect(() => {

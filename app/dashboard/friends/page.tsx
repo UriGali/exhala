@@ -725,16 +725,22 @@ export default function FriendsDashboard() {
           loadUnreadCounts(activeUserId)
           loadStoriesData(activeUserId)
           loadGroupsData(activeUserId)
-        }, 10000)
+        }, 30000)
 
-        const handleFocus = () => {
-          loadStoriesData(activeUserId)
+        const handleVisibilityOrFocus = () => {
+          if (typeof document !== 'undefined' && !document.hidden) {
+            loadStoriesData(activeUserId)
+            loadUnreadCounts(activeUserId)
+            loadUnreadNotifications(activeUserId)
+          }
         }
-        window.addEventListener('focus', handleFocus)
+        window.addEventListener('focus', handleVisibilityOrFocus)
+        document.addEventListener('visibilitychange', handleVisibilityOrFocus)
 
         return () => {
           clearInterval(unreadInterval)
-          window.removeEventListener('focus', handleFocus)
+          window.removeEventListener('focus', handleVisibilityOrFocus)
+          document.removeEventListener('visibilitychange', handleVisibilityOrFocus)
           supabase.removeChannel(inboxChannel)
           supabase.removeChannel(plantChannel)
           supabase.removeChannel(groupChannel)
