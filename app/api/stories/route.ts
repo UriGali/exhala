@@ -119,6 +119,7 @@ export async function GET(request: Request) {
           userId: uId,
           userName: fullName,
           userInitials: initials,
+          avatarUrl: prof?.avatar_url || null,
           userRole: prof?.role || 'smoker',
           stories: [],
         }

@@ -7,6 +7,7 @@ import { UserStoriesGroup } from '@/components/StoryViewerModal'
 interface StoriesBarProps {
   currentUserId: string | null
   currentUserName: string
+  currentUserAvatarUrl?: string | null
   usersWithStories: UserStoriesGroup[]
   onOpenCreateStory: (initialImg?: string | null) => void
   onOpenStoryViewer: (userIndex: number) => void
@@ -15,6 +16,7 @@ interface StoriesBarProps {
 function StoriesBarComponent({
   currentUserId,
   currentUserName,
+  currentUserAvatarUrl,
   usersWithStories,
   onOpenCreateStory,
   onOpenStoryViewer,
@@ -25,9 +27,12 @@ function StoriesBarComponent({
   const myStoriesGroupIndex = usersWithStories.findIndex(
     (u) => u.userId === currentUserId
   )
+  const myStoriesGroup = myStoriesGroupIndex !== -1 ? usersWithStories[myStoriesGroupIndex] : null
   const hasMyStories =
     myStoriesGroupIndex !== -1 &&
     usersWithStories[myStoriesGroupIndex].stories.length > 0
+
+  const myAvatarUrl = currentUserAvatarUrl || myStoriesGroup?.avatarUrl || null
 
   const myInitials = (currentUserName || 'TÚ')
     .split(' ')
@@ -93,8 +98,19 @@ function StoriesBarComponent({
                 title="Ver tu historia de hoy"
               >
                 <div className="w-full h-full rounded-full bg-[#16241C] p-[2px]">
-                  <div className="w-full h-full rounded-full bg-gradient-to-br from-[#EFC471] to-[#E8B75E] text-[#1B1710] font-bold text-[13px] flex items-center justify-center">
-                    {myInitials}
+                  <div className="w-full h-full rounded-full overflow-hidden bg-gradient-to-br from-[#EFC471] to-[#E8B75E] text-[#1B1710] font-bold text-[13px] flex items-center justify-center">
+                    {myAvatarUrl ? (
+                      <img
+                        src={myAvatarUrl}
+                        alt="Tu foto"
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none'
+                        }}
+                      />
+                    ) : (
+                      myInitials
+                    )}
                   </div>
                 </div>
               </button>
@@ -106,8 +122,19 @@ function StoriesBarComponent({
                 className="w-[58px] h-[58px] rounded-full p-[2px] border-2 border-dashed border-[rgba(232,183,94,0.35)] bg-[rgba(255,255,255,0.02)] cursor-pointer hover:border-[#E8B75E] hover:scale-105 active:scale-95 transition-all flex items-center justify-center shadow-sm"
                 title="Toca para abrir cámara y subir historia"
               >
-                <div className="w-[46px] h-[46px] rounded-full bg-[rgba(232,183,94,0.1)] text-[#E8B75E] font-bold text-[13px] flex items-center justify-center">
-                  {myInitials}
+                <div className="w-[46px] h-[46px] rounded-full overflow-hidden bg-[rgba(232,183,94,0.1)] text-[#E8B75E] font-bold text-[13px] flex items-center justify-center">
+                  {myAvatarUrl ? (
+                    <img
+                      src={myAvatarUrl}
+                      alt="Tu foto"
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        e.currentTarget.style.display = 'none'
+                      }}
+                    />
+                  ) : (
+                    myInitials
+                  )}
                 </div>
               </button>
             )}
@@ -154,8 +181,19 @@ function StoriesBarComponent({
                 className={`w-[58px] h-[58px] rounded-full p-[2.5px] bg-gradient-to-tr ${gradientClass} group-hover:scale-105 active:scale-95 transition-all shadow-md`}
               >
                 <div className="w-full h-full rounded-full bg-[#16241C] p-[2px]">
-                  <div className="w-full h-full rounded-full bg-gradient-to-br from-[#253A2C] to-[#16241C] border border-[rgba(232,183,94,0.15)] text-[#E8B75E] font-bold text-[13px] flex items-center justify-center">
-                    {grp.userInitials}
+                  <div className="w-full h-full rounded-full overflow-hidden bg-gradient-to-br from-[#253A2C] to-[#16241C] border border-[rgba(232,183,94,0.15)] text-[#E8B75E] font-bold text-[13px] flex items-center justify-center">
+                    {grp.avatarUrl ? (
+                      <img
+                        src={grp.avatarUrl}
+                        alt={grp.userName}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none'
+                        }}
+                      />
+                    ) : (
+                      grp.userInitials
+                    )}
                   </div>
                 </div>
               </div>

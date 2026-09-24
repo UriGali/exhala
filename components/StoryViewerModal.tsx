@@ -46,6 +46,7 @@ export interface UserStoriesGroup {
   userId: string
   userName: string
   userInitials: string
+  avatarUrl?: string | null
   userRole: 'smoker' | 'friend'
   stories: StoryItem[]
 }
@@ -883,8 +884,19 @@ export default function StoryViewerModal({
         {/* ============================================================== */}
         <header className="relative z-20 px-3.5 py-2 flex items-center justify-between pointer-events-auto">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#EFC471] to-[#E8B75E] text-[#2B1C08] font-bold text-xs flex items-center justify-center border-2 border-white/20 shadow-md">
-              {activeUser.userInitials}
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#EFC471] to-[#E8B75E] text-[#2B1C08] font-bold text-xs flex items-center justify-center border-2 border-white/20 shadow-md overflow-hidden shrink-0">
+              {activeUser.avatarUrl ? (
+                <img
+                  src={activeUser.avatarUrl}
+                  alt={activeUser.userName}
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none'
+                  }}
+                />
+              ) : (
+                activeUser.userInitials
+              )}
             </div>
 
             <div className="min-w-0">
@@ -1201,8 +1213,19 @@ export default function StoryViewerModal({
                                 : 'from-[#52B788] to-[#A796D8]'
                             } shrink-0`}
                           >
-                            <div className="w-full h-full rounded-full bg-[#16241C] flex items-center justify-center font-bold text-xs text-[#F1EEE2]">
-                              {viewer.initials}
+                            <div className="w-full h-full rounded-full bg-[#16241C] overflow-hidden flex items-center justify-center font-bold text-xs text-[#F1EEE2]">
+                              {viewer.avatarUrl ? (
+                                <img
+                                  src={viewer.avatarUrl}
+                                  alt={viewer.name}
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    e.currentTarget.style.display = 'none'
+                                  }}
+                                />
+                              ) : (
+                                viewer.initials
+                              )}
                             </div>
                           </div>
 

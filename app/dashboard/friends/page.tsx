@@ -164,6 +164,7 @@ export default function FriendsDashboard() {
   // Usuario autenticado
   const [userId, setUserId] = useState<string | null>(null)
   const [userName, setUserName] = useState<string>('Un amigo')
+  const [userAvatarUrl, setUserAvatarUrl] = useState<string | null>(null)
   const [squadCode, setSquadCode] = useState<string>('')
   const [copiedCode, setCopiedCode] = useState<boolean>(false)
 
@@ -622,11 +623,12 @@ export default function FriendsDashboard() {
 
         const { data: profile } = await supabase
           .from('profiles')
-          .select('full_name')
+          .select('full_name, avatar_url')
           .eq('id', activeUserId)
           .maybeSingle()
 
         if (profile?.full_name) setUserName(profile.full_name)
+        if (profile?.avatar_url) setUserAvatarUrl(profile.avatar_url)
 
         // Cargar datos en segundo plano
         loadFriendsData(activeUserId)
@@ -1423,6 +1425,7 @@ export default function FriendsDashboard() {
           <StoriesBar
             currentUserId={userId}
             currentUserName={userName}
+            currentUserAvatarUrl={userAvatarUrl}
             usersWithStories={storiesUsers}
             onOpenCreateStory={(initialImg) => {
               setInitialStoryImage(initialImg || null)

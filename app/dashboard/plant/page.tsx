@@ -1200,6 +1200,7 @@ function PlantPageContent() {
           <StoriesBar
             currentUserId={userId}
             currentUserName={userName}
+            currentUserAvatarUrl={profile?.avatar_url || null}
             usersWithStories={storiesUsers}
             onOpenCreateStory={(initialImg) => {
               setInitialStoryImage(initialImg || null)
