@@ -95,23 +95,24 @@ export default function GroupChatModal({
   useEffect(() => {
     async function fetchMemberProfiles() {
       try {
-        const { data } = await supabase
-          .from('group_members')
-          .select('user_id, profile:profiles(id, full_name, avatar_url)')
-          .eq('group_id', group.id)
-
-        if (data && Array.isArray(data)) {
-          const map: Record<string, { name: string; avatar_url: string | null }> = {}
-          data.forEach((item: any) => {
-            const prof = Array.isArray(item.profile) ? item.profile[0] : item.profile
-            if (prof && item.user_id) {
-              map[item.user_id] = {
-                name: prof.full_name || 'Compañero',
-                avatar_url: prof.avatar_url || null,
+        const { data: { session } } = await supabase.auth.getSession()
+        const res = await fetch(`/api/groups/${group.id}/members?viewerId=${currentUserId || ''}`, {
+          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (data.success && Array.isArray(data.members)) {
+            const map: Record<string, { name: string; avatar_url: string | null }> = {}
+            data.members.forEach((item: any) => {
+              if (item.user_id) {
+                map[item.user_id] = {
+                  name: item.name || 'Compañero',
+                  avatar_url: item.avatar_url || null,
+                }
               }
-            }
-          })
-          setMemberProfilesMap(map)
+            })
+            setMemberProfilesMap(map)
+          }
         }
       } catch (err) {
         console.warn('Error fetching group member profiles:', err)
@@ -119,7 +120,7 @@ export default function GroupChatModal({
     }
 
     fetchMemberProfiles()
-  }, [group.id])
+  }, [group.id, currentUserId])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })

@@ -14,13 +14,9 @@ export async function GET(
     const { id: groupId } = await params
     const { searchParams } = new URL(request.url)
     const viewerId = searchParams.get('viewerId')
-
     const authHeader = request.headers.get('Authorization') || request.headers.get('authorization')
-    const clientOptions = authHeader
-      ? { global: { headers: { Authorization: authHeader } } }
-      : undefined
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, clientOptions)
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
     // 1. Obtener detalles del grupo
     const { data: group } = await supabase
@@ -29,17 +25,10 @@ export async function GET(
       .eq('id', groupId)
       .maybeSingle()
 
-    // 2. Obtener miembros del grupo con sus perfiles
+    // 2. Obtener miembros del grupo
     const { data: members, error } = await supabase
       .from('group_members')
-      .select(`
-        id,
-        group_id,
-        user_id,
-        role,
-        joined_at,
-        profile:profiles(id, full_name, role, avatar_url, smoke_free_since)
-      `)
+      .select('id, group_id, user_id, role, joined_at')
       .eq('group_id', groupId)
 
     if (error || !members || members.length === 0) {
@@ -48,6 +37,21 @@ export async function GET(
         group: group || null,
         members: [],
       })
+    }
+
+    const memberUserIds = members.map((m: any) => m.user_id).filter(Boolean)
+    const clientWithAuth = authHeader
+      ? createClient(SUPABASE_URL, SUPABASE_KEY, { global: { headers: { Authorization: authHeader } } })
+      : supabase
+
+    const profileMap = new Map<string, any>()
+    if (memberUserIds.length > 0) {
+      const { data: profList } = await clientWithAuth
+        .from('profiles')
+        .select('id, full_name, role, avatar_url, smoke_free_since')
+        .in('id', memberUserIds)
+
+      profList?.forEach((p: any) => profileMap.set(p.id, p))
     }
 
     // 3. Consultar amistades del viewer para saber si es amigo o no
@@ -84,8 +88,8 @@ export async function GET(
         }
       }
 
-      const p = m.profile || {}
-      const fullName = p.full_name || 'Compañero'
+      const p = profileMap.get(targetUserId) || {}
+      const fullName = p.full_name || (isViewer ? 'Tú' : 'Compañero')
       const initials = fullName
         .split(' ')
         .map((w: string) => w[0])
@@ -134,11 +138,7 @@ export async function POST(
       return NextResponse.json({ error: 'user_ids array is required' }, { status: 400 })
     }
 
-    const clientOptions = authHeader
-      ? { global: { headers: { Authorization: authHeader } } }
-      : undefined
-
-    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, clientOptions)
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
     const rows = user_ids.map((uId: string) => ({
       group_id: groupId,

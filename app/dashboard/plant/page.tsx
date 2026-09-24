@@ -185,6 +185,13 @@ function PlantPageContent() {
         const data = await res.json()
         if (data.success && Array.isArray(data.groups)) {
           setGroupsList(data.groups)
+          if (
+            typeof window !== 'undefined' &&
+            data.groups.length > 0 &&
+            !localStorage.getItem('plant_active_tab')
+          ) {
+            setActiveTab('groups')
+          }
           const unreadMap: Record<string, number> = {}
           data.groups.forEach((grp: any) => {
             if (grp.last_message && grp.last_message.sender_id !== currentUserId) {
@@ -1313,6 +1320,51 @@ function PlantPageContent() {
             /* =============================================================== */
             friendsList.length === 0 ? (
               <div className="space-y-3">
+                {/* ACCESO DIRECTO A TU GRUPO */}
+                {groupsList.length > 0 && (
+                  <div className="space-y-2 mb-2">
+                    {groupsList.map((grp) => {
+                      const hasUnread = Boolean(unreadGroupCounts[grp.id])
+                      return (
+                        <div
+                          key={`friends-empty-group-${grp.id}`}
+                          onClick={() => handleOpenGroupChat(grp)}
+                          className="p-3.5 rounded-2xl border border-[rgba(232,183,94,0.35)] bg-gradient-to-r from-[rgba(232,183,94,0.14)] via-[rgba(232,183,94,0.06)] to-[rgba(255,255,255,0.02)] hover:border-[rgba(232,183,94,0.55)] hover:bg-[rgba(232,183,94,0.18)] transition-all flex items-center justify-between gap-3 cursor-pointer group shadow-sm"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#EFC471] to-[#E8B75E] text-[#1B1710] font-bold text-sm flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition-transform">
+                              <Users className="w-4 h-4 text-[#1B1710]" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[9.5px] font-bold uppercase tracking-wider text-[#1B1710] bg-[#E8B75E] px-1.5 py-0.2 rounded-md">
+                                  Tu Grupo
+                                </span>
+                                <h4 className="font-semibold text-[13.5px] text-[#F1EEE2] truncate">
+                                  {grp.name}
+                                </h4>
+                                {hasUnread && (
+                                  <span className="w-2 h-2 rounded-full bg-[#E8547C] animate-pulse" />
+                                )}
+                              </div>
+                              <p className="text-[11px] text-[#A9BBA4] truncate mt-0.5">
+                                {grp.last_message?.content || `${grp.member_count || 8} miembros en esta sala`}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[11px] text-[#E8B75E] font-medium bg-[#E8B75E]/15 px-2.5 py-1 rounded-full border border-[#E8B75E]/30 flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                              <span>Abrir Chat</span>
+                            </span>
+                            <ChevronRight className="w-4 h-4 text-[#E8B75E]" />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
                 {pendingReceived.length > 0 && (
                   <div
                     onClick={() => setShowAddFriendModal(true)}
@@ -1357,6 +1409,51 @@ function PlantPageContent() {
               </div>
             ) : (
               <div className="space-y-2">
+                {/* ACCESO DIRECTO A TU GRUPO */}
+                {groupsList.length > 0 && (
+                  <div className="space-y-2 mb-2">
+                    {groupsList.map((grp) => {
+                      const hasUnread = Boolean(unreadGroupCounts[grp.id])
+                      return (
+                        <div
+                          key={`friends-list-group-${grp.id}`}
+                          onClick={() => handleOpenGroupChat(grp)}
+                          className="p-3.5 rounded-2xl border border-[rgba(232,183,94,0.35)] bg-gradient-to-r from-[rgba(232,183,94,0.14)] via-[rgba(232,183,94,0.06)] to-[rgba(255,255,255,0.02)] hover:border-[rgba(232,183,94,0.55)] hover:bg-[rgba(232,183,94,0.18)] transition-all flex items-center justify-between gap-3 cursor-pointer group shadow-sm"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#EFC471] to-[#E8B75E] text-[#1B1710] font-bold text-sm flex items-center justify-center shrink-0 shadow-sm group-hover:scale-105 transition-transform">
+                              <Users className="w-4 h-4 text-[#1B1710]" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[9.5px] font-bold uppercase tracking-wider text-[#1B1710] bg-[#E8B75E] px-1.5 py-0.2 rounded-md">
+                                  Tu Grupo
+                                </span>
+                                <h4 className="font-semibold text-[13.5px] text-[#F1EEE2] truncate">
+                                  {grp.name}
+                                </h4>
+                                {hasUnread && (
+                                  <span className="w-2 h-2 rounded-full bg-[#E8547C] animate-pulse" />
+                                )}
+                              </div>
+                              <p className="text-[11px] text-[#A9BBA4] truncate mt-0.5">
+                                {grp.last_message?.content || `${grp.member_count || 8} miembros en esta sala`}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[11px] text-[#E8B75E] font-medium bg-[#E8B75E]/15 px-2.5 py-1 rounded-full border border-[#E8B75E]/30 flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                              <span>Abrir Chat</span>
+                            </span>
+                            <ChevronRight className="w-4 h-4 text-[#E8B75E]" />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
                 {pendingReceived.length > 0 && (
                   <div
                     onClick={() => setShowAddFriendModal(true)}

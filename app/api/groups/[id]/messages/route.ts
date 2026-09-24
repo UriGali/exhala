@@ -15,22 +15,11 @@ export async function GET(
     const { id: groupId } = await params
     const authHeader = request.headers.get('Authorization') || request.headers.get('authorization')
 
-    const clientOptions = authHeader
-      ? { global: { headers: { Authorization: authHeader } } }
-      : undefined
-
-    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, clientOptions)
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
     const { data: messages, error } = await supabase
       .from('group_messages')
-      .select(`
-        id,
-        group_id,
-        sender_id,
-        content,
-        created_at,
-        sender:profiles(id, full_name, role, avatar_url)
-      `)
+      .select('id, group_id, sender_id, content, created_at')
       .eq('group_id', groupId)
       .order('created_at', { ascending: true })
 
@@ -38,7 +27,27 @@ export async function GET(
       return NextResponse.json({ success: true, messages: [] })
     }
 
-    return NextResponse.json({ success: true, messages })
+    const senderIds = Array.from(new Set(messages.map((m: any) => m.sender_id).filter(Boolean)))
+    const clientWithAuth = authHeader
+      ? createClient(SUPABASE_URL, SUPABASE_KEY, { global: { headers: { Authorization: authHeader } } })
+      : supabase
+
+    let profileMap = new Map<string, any>()
+    if (senderIds.length > 0) {
+      const { data: profiles } = await clientWithAuth
+        .from('profiles')
+        .select('id, full_name, role, avatar_url')
+        .in('id', senderIds)
+
+      profiles?.forEach((p: any) => profileMap.set(p.id, p))
+    }
+
+    const enrichedMessages = messages.map((m: any) => ({
+      ...m,
+      sender: profileMap.get(m.sender_id) || null,
+    }))
+
+    return NextResponse.json({ success: true, messages: enrichedMessages })
   } catch (err: any) {
     console.error('[Group Messages GET API] Error:', err)
     return NextResponse.json({ success: false, error: err.message }, { status: 500 })
@@ -59,11 +68,7 @@ export async function POST(
       return NextResponse.json({ error: 'sender_id and content are required' }, { status: 400 })
     }
 
-    const clientOptions = authHeader
-      ? { global: { headers: { Authorization: authHeader } } }
-      : undefined
-
-    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, clientOptions)
+    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY)
 
     const nowIso = new Date().toISOString()
     const { data: newMsg, error } = await supabase
