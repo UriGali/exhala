@@ -100,8 +100,15 @@ function PlantPageContent() {
   const searchParams = useSearchParams()
   const initialFriendParam = searchParams.get('friendId')
 
-  // Pestaña principal de Inicio: Amigos o Grupos
+  // Pestaña principal de Inicio: Amigos o Grupos (con persistencia)
   const [activeTab, setActiveTab] = useState<HomeTab>('friends')
+
+  const handleTabChange = useCallback((tab: HomeTab) => {
+    setActiveTab(tab)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('plant_active_tab', tab)
+    }
+  }, [])
 
   // Estado del usuario autenticado
   const [userId, setUserId] = useState<string | null>(null)
@@ -420,6 +427,16 @@ function PlantPageContent() {
 
         if (typeof window !== 'undefined') {
           const urlParams = new URLSearchParams(window.location.search)
+          const tabParam = urlParams.get('tab')
+          if (tabParam === 'groups' || tabParam === 'friends') {
+            setActiveTab(tabParam)
+          } else {
+            const savedTab = localStorage.getItem('plant_active_tab') as HomeTab | null
+            if (savedTab === 'groups' || savedTab === 'friends') {
+              setActiveTab(savedTab)
+            }
+          }
+
           if (urlParams.get('action') === 'add') {
             setShowAddFriendModal(true)
           }
@@ -529,6 +546,7 @@ function PlantPageContent() {
                 ...prev,
                 [newMsg.group_id]: (prev[newMsg.group_id] || 0) + 1,
               }))
+              loadGroupsData(activeUserId)
             }
           )
           .subscribe()
@@ -1238,7 +1256,7 @@ function PlantPageContent() {
           <div className="grid grid-cols-2 p-1 rounded-2xl bg-black/30 border border-[rgba(232,183,94,0.12)]">
             <button
               type="button"
-              onClick={() => setActiveTab('friends')}
+              onClick={() => handleTabChange('friends')}
               className={`py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                 activeTab === 'friends'
                   ? 'bg-gradient-to-r from-[#EFC471] to-[#E8B75E] text-[#1B1710] shadow-md font-bold'
@@ -1260,7 +1278,7 @@ function PlantPageContent() {
 
             <button
               type="button"
-              onClick={() => setActiveTab('groups')}
+              onClick={() => handleTabChange('groups')}
               className={`py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer relative ${
                 activeTab === 'groups'
                   ? 'bg-gradient-to-r from-[#EFC471] to-[#E8B75E] text-[#1B1710] shadow-md font-bold'
