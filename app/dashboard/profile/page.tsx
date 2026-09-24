@@ -1,7 +1,8 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import {
   LogOut,
   Bell,
@@ -19,6 +20,13 @@ import {
   PiggyBank,
   Settings,
   HeartPulse,
+  Award,
+  Camera,
+  Pencil,
+  Trash2,
+  Upload,
+  User,
+  Image as ImageIcon,
 } from 'lucide-react'
 import confetti from 'canvas-confetti'
 import { supabase } from '@/lib/supabase/client'
@@ -26,6 +34,51 @@ import { Profile } from '@/types/database.types'
 import { getPushPermission, requestPushPermissionAndSubscribe } from '@/lib/push-notifications'
 import BottomNav from '@/components/BottomNav'
 import { dispatchPushAlertToFriends } from '@/lib/push-notifications'
+
+interface BotanicalPreset {
+  id: string
+  name: string
+  emoji: string
+  bgColor: string
+}
+
+const BOTANICAL_PRESETS: BotanicalPreset[] = [
+  { id: 'bonsai', name: 'Bonsái Zen', emoji: '🪴', bgColor: '#1E3524' },
+  { id: 'leaf', name: 'Hoja Esmeralda', emoji: '🍃', bgColor: '#163323' },
+  { id: 'lotus', name: 'Flor de Loto', emoji: '🪷', bgColor: '#312338' },
+  { id: 'bamboo', name: 'Bambú Verde', emoji: '🎋', bgColor: '#1D3B2B' },
+  { id: 'sunrise', name: 'Amanecer Dorado', emoji: '🌅', bgColor: '#382B14' },
+  { id: 'droplet', name: 'Gota de Rocío', emoji: '💧', bgColor: '#162C3A' },
+  { id: 'butterfly', name: 'Vuelo Libre', emoji: '🦋', bgColor: '#25203A' },
+  { id: 'shield', name: 'Guardián', emoji: '🛡️', bgColor: '#2A2E20' },
+]
+
+function generatePresetAvatarDataUrl(emoji: string, bgColor: string): string {
+  if (typeof document === 'undefined') return ''
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 128
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return ''
+
+  ctx.beginPath()
+  ctx.arc(64, 64, 64, 0, Math.PI * 2)
+  ctx.fillStyle = bgColor
+  ctx.fill()
+
+  ctx.beginPath()
+  ctx.arc(64, 64, 62, 0, Math.PI * 2)
+  ctx.lineWidth = 3
+  ctx.strokeStyle = 'rgba(232, 183, 94, 0.4)'
+  ctx.stroke()
+
+  ctx.font = '62px sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(emoji, 64, 68)
+
+  return canvas.toDataURL('image/png')
+}
 
 export default function ProfilePage() {
   const router = useRouter()
@@ -41,6 +94,21 @@ export default function ProfilePage() {
   const [isActivatingPush, setIsActivatingPush] = useState<boolean>(false)
   const [pushFeedback, setPushFeedback] = useState<string | null>(null)
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0)
+
+  // Foto de perfil y nombre rápido
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
+  const [showAvatarModal, setShowAvatarModal] = useState<boolean>(false)
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState<boolean>(false)
+  const [isEditingName, setIsEditingName] = useState<boolean>(false)
+  const [editNameInput, setEditNameInput] = useState<string>('')
+  const [isSavingName, setIsSavingName] = useState<boolean>(false)
+  const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg)
+    setTimeout(() => setToastMessage(null), 3200)
+  }
 
   // Formulario editable
   const [fullName, setFullName] = useState<string>('')
@@ -92,8 +160,11 @@ export default function ProfilePage() {
 
         if (userProfile) {
           setProfile(userProfile)
-          setFullName(userProfile.full_name || '')
+          const nameVal = userProfile.full_name || ''
+          setFullName(nameVal)
+          setEditNameInput(nameVal)
           if (userProfile.full_name) setUserName(userProfile.full_name)
+          if (userProfile.avatar_url) setAvatarUrl(userProfile.avatar_url)
           setCigsPerDay(userProfile.cigs_per_day || 15)
           setPackPrice(Number(userProfile.pack_price) || 5.5)
           setPenaltyAmount(Number(userProfile.penalty_amount) || 1.0)
@@ -179,6 +250,7 @@ export default function ProfilePage() {
       const payload = {
         id: userId,
         full_name: fullName.trim() || 'Compañero',
+        avatar_url: avatarUrl,
         smoke_free_since: dateIso,
         cigs_per_day: Number(cigsPerDay) || 15,
         pack_price: Number(packPrice) || 5.5,
@@ -195,6 +267,9 @@ export default function ProfilePage() {
       if (error) throw error
 
       setProfile(data)
+      setFullName(data.full_name || fullName)
+      setUserName(data.full_name || fullName)
+      setEditNameInput(data.full_name || fullName)
       setStatusMessage({ type: 'success', text: '¡Cambios guardados con éxito!' })
       try {
         confetti({
@@ -213,6 +288,132 @@ export default function ProfilePage() {
       })
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  // Guardar avatar en la base de datos
+  const saveAvatarToProfile = async (newAvatarUrl: string | null) => {
+    if (!userId) return
+    setIsUploadingAvatar(true)
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          avatar_url: newAvatarUrl,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', userId)
+
+      if (error) throw error
+
+      setAvatarUrl(newAvatarUrl)
+      setProfile((prev) => (prev ? { ...prev, avatar_url: newAvatarUrl } : null))
+      setShowAvatarModal(false)
+
+      try {
+        confetti({
+          particleCount: 35,
+          spread: 60,
+          origin: { y: 0.55 },
+          colors: ['#E8B75E', '#52B788', '#F1EEE2'],
+        })
+      } catch {}
+
+      showToast(newAvatarUrl ? '¡Foto de perfil actualizada con éxito! 🌿' : 'Foto de perfil eliminada.')
+    } catch (err: any) {
+      console.error('Error saving avatar:', err)
+      showToast('No se pudo guardar la foto de perfil.')
+    } finally {
+      setIsUploadingAvatar(false)
+    }
+  }
+
+  // Seleccionar preset botánico
+  const handleSelectPresetAvatar = (preset: BotanicalPreset) => {
+    const dataUrl = generatePresetAvatarDataUrl(preset.emoji, preset.bgColor)
+    saveAvatarToProfile(dataUrl)
+  }
+
+  // Procesar archivo de imagen desde dispositivo
+  const processAvatarImage = (file: File) => {
+    setIsUploadingAvatar(true)
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const img = new Image()
+      img.onload = async () => {
+        try {
+          const canvas = document.createElement('canvas')
+          const size = 256
+          canvas.width = size
+          canvas.height = size
+          const ctx = canvas.getContext('2d')
+          if (ctx) {
+            const minDim = Math.min(img.width, img.height)
+            const sx = (img.width - minDim) / 2
+            const sy = (img.height - minDim) / 2
+            ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size)
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+            await saveAvatarToProfile(dataUrl)
+          }
+        } catch (err) {
+          console.error('Error processing avatar image:', err)
+          showToast('No se pudo procesar la imagen seleccionada.')
+          setIsUploadingAvatar(false)
+        }
+      }
+      img.onerror = () => {
+        setIsUploadingAvatar(false)
+        showToast('Formato de imagen no compatible.')
+      }
+      img.src = event.target?.result as string
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const handleAvatarFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      processAvatarImage(file)
+    }
+  }
+
+  // Guardado rápido de nombre desde la tarjeta de perfil
+  const handleQuickSaveName = async () => {
+    const trimmed = editNameInput.trim()
+    if (!userId || !trimmed || isSavingName) return
+    setIsSavingName(true)
+
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          full_name: trimmed,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', userId)
+
+      if (error) throw error
+
+      setFullName(trimmed)
+      setUserName(trimmed)
+      setProfile((prev) => (prev ? { ...prev, full_name: trimmed } : null))
+      setIsEditingName(false)
+
+      try {
+        confetti({
+          particleCount: 25,
+          spread: 45,
+          origin: { y: 0.55 },
+          colors: ['#E8B75E', '#52B788', '#38BDF8'],
+        })
+      } catch {}
+
+      showToast('¡Nombre actualizado con éxito! ✨')
+    } catch (err: any) {
+      console.error('Error saving name:', err)
+      showToast('No se pudo actualizar el nombre.')
+    } finally {
+      setIsSavingName(false)
     }
   }
 
@@ -359,6 +560,16 @@ export default function ProfilePage() {
           }}
         />
 
+        {/* TOAST FLOTANTE */}
+        {toastMessage && (
+          <div className="absolute top-4 left-4 right-4 z-50 animate-in fade-in slide-in-from-top-2 duration-200 pointer-events-none">
+            <div className="bg-[#16241C]/95 backdrop-blur-md border border-[#E8B75E]/40 text-[#F1EEE2] px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2.5 text-xs">
+              <Sparkles className="w-4 h-4 text-[#E8B75E] shrink-0" />
+              <span className="font-medium">{toastMessage}</span>
+            </div>
+          </div>
+        )}
+
         {/* =================================================================== */}
         {/* 1. CABECERA                                                         */}
         {/* =================================================================== */}
@@ -412,28 +623,118 @@ export default function ProfilePage() {
         {/* =================================================================== */}
         <div className="flex-1 px-[24px] pt-[18px] pb-[16px] space-y-4 overflow-y-auto no-scrollbar relative z-10">
           
-          {/* TARJETA DE USUARIO */}
+          {/* TARJETA DE USUARIO CON AVATAR INTERACTIVO Y EDICIÓN DE NOMBRE */}
           <div
-            className="rounded-[22px] p-[16px] border border-[rgba(232,183,94,0.14)] flex items-center gap-[14px]"
+            className="rounded-[22px] p-[16px] border border-[rgba(232,183,94,0.18)] flex items-center gap-[14px] shadow-sm relative overflow-hidden"
             style={{
-              background: 'linear-gradient(180deg, rgba(232,183,94,0.06), rgba(255,255,255,0.01))',
+              background: 'linear-gradient(180deg, rgba(232,183,94,0.08), rgba(255,255,255,0.01))',
             }}
           >
-            <div
-              className="w-[50px] h-[50px] rounded-full flex items-center justify-center text-[16px] font-semibold text-[#1B1710] shrink-0"
-              style={{
-                background: 'radial-gradient(circle at 35% 30%, #EFC471, #E8B75E)',
-              }}
-            >
-              {(fullName || 'U').charAt(0).toUpperCase()}
+            {/* AVATAR INTERACTIVO */}
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowAvatarModal(true)}
+                className="relative group block rounded-full focus:outline-none focus:ring-2 focus:ring-[#E8B75E]/50 transition-transform active:scale-95 cursor-pointer"
+                title="Cambiar foto de perfil"
+              >
+                <div
+                  className="w-[56px] h-[56px] rounded-full overflow-hidden flex items-center justify-center border-2 border-[rgba(232,183,94,0.35)] shadow-md relative"
+                  style={{
+                    background: avatarUrl
+                      ? '#16241C'
+                      : 'radial-gradient(circle at 35% 30%, #EFC471, #E8B75E)',
+                  }}
+                >
+                  {avatarUrl ? (
+                    <img
+                      src={avatarUrl}
+                      alt={fullName || 'Avatar'}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-[19px] font-bold text-[#1B1710]">
+                      {(fullName || 'U').charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                  {/* Overlay al pasar el cursor */}
+                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                    <Camera className="w-4 h-4 text-white drop-shadow" />
+                  </div>
+                </div>
+
+                {/* Botón flotante de cámara */}
+                <div className="absolute -bottom-1 -right-1 w-[22px] h-[22px] rounded-full bg-[#E8B75E] text-[#1B1710] flex items-center justify-center shadow-md border-2 border-[#16241C] transition-transform group-hover:scale-110">
+                  {isUploadingAvatar ? (
+                    <Loader2 className="w-3 h-3 animate-spin text-[#1B1710]" />
+                  ) : (
+                    <Camera className="w-3 h-3 text-[#1B1710]" />
+                  )}
+                </div>
+              </button>
             </div>
 
+            {/* DATOS DEL USUARIO Y EDICIÓN RÁPIDA DE NOMBRE */}
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <h2 className="font-fraunces font-medium text-[16px] text-[#F1EEE2] truncate">
-                  {fullName || 'Compañero'}
-                </h2>
-              </div>
+              {isEditingName ? (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    handleQuickSaveName()
+                  }}
+                  className="flex items-center gap-1.5"
+                >
+                  <input
+                    type="text"
+                    value={editNameInput}
+                    onChange={(e) => setEditNameInput(e.target.value)}
+                    placeholder="Tu nombre..."
+                    autoFocus
+                    maxLength={32}
+                    className="flex-1 min-w-0 h-8 px-2.5 rounded-lg bg-[rgba(255,255,255,0.08)] border border-[#E8B75E]/50 text-xs text-[#F1EEE2] placeholder-[#7C9481] focus:outline-none focus:ring-1 focus:ring-[#E8B75E]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isSavingName || !editNameInput.trim()}
+                    className="w-8 h-8 rounded-lg bg-[#E8B75E] text-[#1B1710] flex items-center justify-center disabled:opacity-50 transition-opacity shrink-0 cursor-pointer"
+                    title="Guardar nombre"
+                  >
+                    {isSavingName ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditingName(false)
+                      setEditNameInput(fullName)
+                    }}
+                    className="w-8 h-8 rounded-lg bg-white/10 text-[#A9BBA4] hover:text-white flex items-center justify-center shrink-0 cursor-pointer"
+                    title="Cancelar"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </form>
+              ) : (
+                <div className="flex items-center gap-1.5 group">
+                  <h2 className="font-fraunces font-medium text-[16.5px] text-[#F1EEE2] truncate">
+                    {fullName || 'Compañero'}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditNameInput(fullName)
+                      setIsEditingName(true)
+                    }}
+                    className="p-1 rounded-md text-[#7C9481] hover:text-[#E8B75E] hover:bg-white/5 transition-all opacity-80 group-hover:opacity-100 cursor-pointer"
+                    title="Cambiar tu nombre"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
 
               <div className="flex items-center gap-2 mt-0.5">
                 <span className="text-[10px] font-semibold text-[#A796D8] border border-[rgba(167,150,216,0.35)] bg-[rgba(167,150,216,0.08)] py-[1px] px-[7px] rounded-full">
@@ -452,6 +753,29 @@ export default function ProfilePage() {
               </div>
             </div>
           </div>
+
+          {/* ACCESO A LOGROS Y MEDALLAS */}
+          <Link
+            href="/dashboard/achievements"
+            className="rounded-[22px] p-[16px] border border-[rgba(232,183,94,0.22)] bg-gradient-to-r from-[rgba(232,183,94,0.12)] via-[rgba(255,255,255,0.03)] to-[rgba(255,255,255,0.01)] flex items-center justify-between gap-3 hover:border-[rgba(232,183,94,0.4)] transition-all group cursor-pointer shadow-sm"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-[#EFC471] to-[#E8B75E] text-[#1B1710] flex items-center justify-center font-bold shrink-0 shadow-sm group-hover:scale-105 transition-transform">
+                <Award className="w-5 h-5 text-[#1B1710]" />
+              </div>
+              <div>
+                <h3 className="font-fraunces font-medium text-[15px] text-[#F1EEE2] group-hover:text-[#E8B75E] transition-colors">
+                  Tus Logros y Medallas
+                </h3>
+                <p className="text-[11.5px] text-[#7C9481]">
+                  Hitos clínicos, desbloqueos botánicos y compartir
+                </p>
+              </div>
+            </div>
+            <div className="w-8 h-8 rounded-full bg-white/5 border border-[rgba(232,183,94,0.15)] flex items-center justify-center text-[#E8B75E] group-hover:translate-x-1 transition-transform">
+              <span className="text-sm">→</span>
+            </div>
+          </Link>
 
           {/* STATUS MESSAGE FEEDBACK */}
           {statusMessage && (
@@ -515,6 +839,10 @@ export default function ProfilePage() {
                 )}
               </button>
             )}
+
+            <p className="mt-2 text-[11px] text-[#7C9481] leading-relaxed text-center px-2">
+              💡 <span className="text-[#A9BBA4]">En móviles iPhone (iOS):</span> Para recibir notificaciones en tu móvil, pulsa en Compartir en Safari y selecciona <strong className="text-[#E8B75E] font-medium">&quot;Añadir a pantalla de inicio&quot;</strong>.
+            </p>
           </div>
 
           {/* TARJETA DE GANANCIAS Y DINERO AHORRADO EN TABACO */}
@@ -827,6 +1155,137 @@ export default function ProfilePage() {
           </div>
         </div>
       )}
+
+      {/* =================================================================== */}
+      {/* 6. MODAL DE SELECCIÓN Y SUBIDA DE FOTO DE PERFIL                     */}
+      {/* =================================================================== */}
+      {showAvatarModal && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm p-0 sm:p-4 animate-in fade-in duration-200">
+          <div
+            className="w-full sm:max-w-md rounded-t-[32px] sm:rounded-[28px] p-6 space-y-5 border-t sm:border border-[rgba(232,183,94,0.25)] relative max-h-[85vh] overflow-y-auto"
+            style={{
+              background: 'radial-gradient(120% 90% at 50% -10%, #223729 0%, #16241C 55%, #0F1913 100%)',
+              color: '#F1EEE2',
+            }}
+          >
+            {/* Cabecera modal */}
+            <div className="flex items-center justify-between pb-2 border-b border-white/5">
+              <div>
+                <h3 className="font-fraunces text-lg font-medium text-[#F1EEE2]">
+                  Foto de Perfil
+                </h3>
+                <p className="text-xs text-[#7C9481]">
+                  Personaliza cómo te ven tus amigos
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAvatarModal(false)}
+                className="w-8 h-8 rounded-full bg-white/5 text-[#A9BBA4] hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Vista previa actual */}
+            <div className="flex flex-col items-center justify-center py-2">
+              <div
+                className="w-20 h-20 rounded-full overflow-hidden flex items-center justify-center border-2 border-[#E8B75E] shadow-xl relative"
+                style={{
+                  background: avatarUrl
+                    ? '#16241C'
+                    : 'radial-gradient(circle at 35% 30%, #EFC471, #E8B75E)',
+                }}
+              >
+                {avatarUrl ? (
+                  <img
+                    src={avatarUrl}
+                    alt="Preview"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <span className="text-2xl font-bold text-[#1B1710]">
+                    {(fullName || 'U').charAt(0).toUpperCase()}
+                  </span>
+                )}
+                {isUploadingAvatar && (
+                  <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                    <Loader2 className="w-6 h-6 animate-spin text-[#E8B75E]" />
+                  </div>
+                )}
+              </div>
+              <p className="text-[11px] text-[#A9BBA4] mt-2">
+                {avatarUrl ? 'Foto actual seleccionada' : 'Sin foto personalizada (inicial)'}
+              </p>
+            </div>
+
+            {/* Opción 1: Subir desde dispositivo */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploadingAvatar}
+              className="w-full p-3.5 rounded-2xl bg-[rgba(232,183,94,0.1)] hover:bg-[rgba(232,183,94,0.18)] border border-[rgba(232,183,94,0.3)] flex items-center justify-center gap-2.5 text-xs font-semibold text-[#E8B75E] transition-all cursor-pointer group shadow-sm"
+            >
+              <Upload className="w-4 h-4 text-[#E8B75E] group-hover:scale-110 transition-transform" />
+              <span>Subir foto desde dispositivo o cámara</span>
+            </button>
+
+            {/* Opción 2: Avatares botánicos de Exhala */}
+            <div className="space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-[#A9BBA4] uppercase tracking-wider">
+                  Avatares Botánicos de Exhala
+                </span>
+                <span className="text-[10px] text-[#7C9481]">Elige tu símbolo</span>
+              </div>
+
+              <div className="grid grid-cols-4 gap-2.5">
+                {BOTANICAL_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => handleSelectPresetAvatar(preset)}
+                    disabled={isUploadingAvatar}
+                    className="flex flex-col items-center gap-1.5 p-2 rounded-xl bg-white/[0.03] hover:bg-white/[0.08] border border-white/5 hover:border-[#E8B75E]/40 transition-all cursor-pointer group"
+                  >
+                    <div
+                      className="w-12 h-12 rounded-full flex items-center justify-center text-xl shadow-inner border border-white/10 group-hover:scale-105 transition-transform"
+                      style={{ backgroundColor: preset.bgColor }}
+                    >
+                      <span>{preset.emoji}</span>
+                    </div>
+                    <span className="text-[10px] text-[#A9BBA4] group-hover:text-[#F1EEE2] text-center leading-tight truncate w-full">
+                      {preset.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Opción 3: Quitar foto si existe */}
+            {avatarUrl && (
+              <button
+                type="button"
+                onClick={() => saveAvatarToProfile(null)}
+                disabled={isUploadingAvatar}
+                className="w-full py-2.5 rounded-xl border border-rose-500/30 text-rose-400 hover:bg-rose-500/10 text-xs font-medium flex items-center justify-center gap-2 transition-all cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Quitar foto actual y usar inicial</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Input de archivo oculto */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleAvatarFileSelect}
+        className="hidden"
+      />
     </div>
   )
 }

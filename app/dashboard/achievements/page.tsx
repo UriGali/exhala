@@ -772,7 +772,7 @@ export default function AchievementsDashboard() {
       )}
 
       {/* 4. BARRA DE NAVEGACIÓN INFERIOR */}
-      <BottomNav currentTab="profile" />
+      <BottomNav currentTab="achievements" />
     </div>
   )
 }

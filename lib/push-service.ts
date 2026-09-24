@@ -48,12 +48,26 @@ export async function sendWebPushToUsers({
 
   try {
     // 1. Obtener las suscripciones push de los usuarios destino
+    if (!SUPABASE_SERVICE_ROLE_KEY) {
+      console.warn(
+        '[WebPush Service] Advertencia: SUPABASE_SERVICE_ROLE_KEY no está configurada en las variables de entorno. Las consultas al servidor para leer push_subscriptions pueden ser bloqueadas por Row Level Security (RLS).'
+      )
+    }
+
     const { data: subscriptions, error: subError } = await supabaseAdmin
       .from('push_subscriptions')
       .select('id, user_id, endpoint, p256dh, auth')
       .in('user_id', uniqueUserIds)
 
-    if (subError || !subscriptions || subscriptions.length === 0) {
+    if (subError) {
+      console.error('[WebPush Service] Error al consultar push_subscriptions en Supabase:', subError.message)
+      return { deliveredTo: 0, errors: 1 }
+    }
+
+    if (!subscriptions || subscriptions.length === 0) {
+      console.warn(
+        `[WebPush Service] No se encontraron suscripciones push registradas para los usuarios: [${uniqueUserIds.join(', ')}]. Asegúrate de que los dispositivos hayan activado las notificaciones en su perfil.`
+      )
       return { deliveredTo: 0, errors: 0 }
     }
 

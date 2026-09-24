@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { X, Users, Check, Plus, Loader2 } from 'lucide-react'
 import confetti from 'canvas-confetti'
+import { supabase } from '@/lib/supabase/client'
 
 interface FriendSelectable {
   id: string
@@ -44,9 +45,13 @@ export default function CreateGroupModal({
     setErrorMsg(null)
 
     try {
+      const { data: { session } } = await supabase.auth.getSession()
       const res = await fetch('/api/groups', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
         body: JSON.stringify({
           name: name.trim(),
           description: description.trim(),

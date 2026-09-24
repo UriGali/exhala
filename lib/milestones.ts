@@ -64,21 +64,12 @@ export async function checkAndDispatchSmokerMilestones(profile: {
   const smokerName = profile.full_name || 'Compañero'
   const streakStart = profile.smoke_free_since
   const streakKey = streakStart.slice(0, 10)
-
-  // 1. Check local storage cache as fast safeguard
   const localCacheKey = `exhala_notified_milestones_${smokerId}_${streakKey}`
-  let localNotifiedWeeks: number[] = []
-  if (typeof window !== 'undefined') {
-    try {
-      const stored = localStorage.getItem(localCacheKey)
-      if (stored) {
-        localNotifiedWeeks = JSON.parse(stored)
-      }
-    } catch {}
-  }
 
-  // 2. Fetch already recorded milestones in Supabase
-  let dbNotifiedWeeks = new Set<number>(localNotifiedWeeks)
+  // 1. Fetch already recorded milestones in Supabase
+  let dbNotifiedWeeks = new Set<number>()
+  let dbCheckSucceeded = false
+
   try {
     const { data: existing, error } = await supabase
       .from('milestone_notifications')
@@ -86,17 +77,34 @@ export async function checkAndDispatchSmokerMilestones(profile: {
       .eq('smoker_id', smokerId)
 
     if (!error && existing) {
+      dbCheckSucceeded = true
       existing.forEach((row: any) => {
         if (typeof row.weeks === 'number') {
           dbNotifiedWeeks.add(row.weeks)
         }
       })
+    } else if (error) {
+      console.warn('milestone_notifications table not available or error querying:', error.message)
     }
   } catch (err) {
     console.warn('Could not query milestone_notifications table:', err)
   }
 
-  // 3. Find weeks between 1 and currentWeeks that have not been dispatched
+  // Use localStorage cache as secondary safeguard if DB succeeded or fallback
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem(localCacheKey)
+      if (stored) {
+        const localList: number[] = JSON.parse(stored)
+        // If DB query succeeded and DB has 0 records, do not let an obsolete local cache permanently block notifications
+        if (!dbCheckSucceeded || dbNotifiedWeeks.size > 0) {
+          localList.forEach((w) => dbNotifiedWeeks.add(w))
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Find weeks between 1 and currentWeeks that have not been dispatched
   const weeksToDispatch: number[] = []
   for (let w = 1; w <= currentWeeks; w++) {
     if (!dbNotifiedWeeks.has(w)) {
@@ -108,7 +116,7 @@ export async function checkAndDispatchSmokerMilestones(profile: {
     return { newlyDispatched: [], totalWeeks: currentWeeks }
   }
 
-  // 4. Fetch accepted friends
+  // 3. Fetch accepted friends
   let friendIds: string[] = []
   try {
     const { data: friendships } = await supabase
@@ -121,8 +129,8 @@ export async function checkAndDispatchSmokerMilestones(profile: {
       friendIds = Array.from(
         new Set(
           friendships
-            .map((f) => (f.smoker_id === smokerId ? f.friend_id : f.smoker_id))
-            .filter((id) => id && id !== smokerId)
+            .map((f: any) => (f.smoker_id === smokerId ? f.friend_id : f.smoker_id))
+            .filter((id: string) => id && id !== smokerId)
         )
       )
     }
@@ -132,7 +140,7 @@ export async function checkAndDispatchSmokerMilestones(profile: {
 
   const dispatchedWeeks: number[] = []
 
-  // 5. For each unnotified week, insert DB rows and send push notification
+  // 4. For each unnotified week, insert DB rows and send push notification
   for (const week of weeksToDispatch) {
     const copy = getMilestoneCopy(smokerName, week)
 
@@ -152,16 +160,16 @@ export async function checkAndDispatchSmokerMilestones(profile: {
       } catch (err) {
         console.warn(`Error inserting milestone_notifications for week ${week}:`, err)
       }
-
-      // Dispatch Web Push to friends
-      await dispatchPushMilestoneToFriends(smokerId, smokerName, week)
     }
+
+    // Dispatch Web Push to friends AND the smoker themselves
+    await dispatchPushMilestoneToFriends(smokerId, smokerName, week)
 
     dispatchedWeeks.push(week)
     dbNotifiedWeeks.add(week)
   }
 
-  // 6. Update local storage cache
+  // 5. Update local storage cache
   if (typeof window !== 'undefined' && dispatchedWeeks.length > 0) {
     try {
       const updatedCache = Array.from(dbNotifiedWeeks)
@@ -170,4 +178,24 @@ export async function checkAndDispatchSmokerMilestones(profile: {
   }
 
   return { newlyDispatched: dispatchedWeeks, totalWeeks: currentWeeks }
+}
+
+/**
+ * Checks pending milestones for a list of smoker friend IDs via the server endpoint.
+ * This ensures that friends trigger milestone alerts even if the smoker hasn't opened the app.
+ */
+export async function checkSmokersMilestonesViaApi(smokerIds: string[]): Promise<void> {
+  if (!smokerIds || smokerIds.length === 0) return
+  const uniqueIds = Array.from(new Set(smokerIds))
+  for (const userId of uniqueIds) {
+    try {
+      await fetch('/api/milestones/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      })
+    } catch (err) {
+      console.warn(`Could not check milestones via API for ${userId}:`, err)
+    }
+  }
 }

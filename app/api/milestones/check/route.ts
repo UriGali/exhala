@@ -119,7 +119,7 @@ export async function POST(request: Request) {
           console.warn('Error inserting milestone row in DB:', dbErr)
         }
 
-        // Send Web Push notification
+        // Send Web Push notification to friends
         try {
           await sendWebPushToUsers({
             userIds: friendIds,
@@ -128,8 +128,21 @@ export async function POST(request: Request) {
             url: '/dashboard/friends',
           })
         } catch (pushErr) {
-          console.warn('Error sending web push:', pushErr)
+          console.warn('Error sending web push to friends:', pushErr)
         }
+      }
+
+      // Send Web Push notification to smoker themselves
+      try {
+        const weeksText = week === 1 ? '1 semana' : `${week} semanas`
+        await sendWebPushToUsers({
+          userIds: [smokerId],
+          title: copy.pushTitle,
+          body: `¡Enhorabuena, ${smokerName}! Has alcanzado ${weeksText} sin fumar. Tus amigos han recibido tu logro.`,
+          url: '/dashboard/plant',
+        })
+      } catch (selfPushErr) {
+        console.warn('Error sending web push to smoker:', selfPushErr)
       }
 
       newlyDispatched.push(week)

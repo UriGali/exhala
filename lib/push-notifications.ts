@@ -397,41 +397,66 @@ export async function dispatchPushMilestoneToFriends(
       .or(`smoker_id.eq.${smokerId},friend_id.eq.${smokerId}`)
       .eq('status', 'accepted')
 
-    if (!friendships || friendships.length === 0) {
-      return { success: true, dispatchedCount: 0 }
-    }
-
-    const friendIds = Array.from(
-      new Set(
-        friendships
-          .map((f) => (f.smoker_id === smokerId ? f.friend_id : f.smoker_id))
-          .filter((id) => id && id !== smokerId)
-      )
-    )
-
-    if (friendIds.length === 0) {
-      return { success: true, dispatchedCount: 0 }
-    }
+    const friendIds = friendships && friendships.length > 0
+      ? Array.from(
+          new Set(
+            friendships
+              .map((f: any) => (f.smoker_id === smokerId ? f.friend_id : f.smoker_id))
+              .filter((id: string) => id && id !== smokerId)
+          )
+        )
+      : []
 
     const weeksText = weeks === 1 ? '1 semana' : `${weeks} semanas`
     const { data: { session } } = await supabase.auth.getSession()
 
-    const response = await fetch('/api/push/send', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-      },
-      body: JSON.stringify({
-        friendIds,
-        title: `🎉 ¡${weeksText} sin fumar!`,
-        body: `¡Enhorabuena! ${smokerName} lleva ${weeksText} sin fumar.`,
-        url: '/dashboard/friends',
-      }),
-    })
+    let totalDelivered = 0
 
-    const resData = await response.json().catch(() => ({}))
-    return { success: !!resData?.success, dispatchedCount: resData?.deliveredTo || friendIds.length }
+    // 1. Enviar notificación push a los amigos
+    if (friendIds.length > 0) {
+      try {
+        const response = await fetch('/api/push/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
+          body: JSON.stringify({
+            friendIds,
+            title: `🎉 ¡${weeksText} sin fumar!`,
+            body: `¡Enhorabuena! ${smokerName} lleva ${weeksText} sin fumar.`,
+            url: '/dashboard/friends',
+          }),
+        })
+        const resData = await response.json().catch(() => ({}))
+        totalDelivered += resData?.deliveredTo || 0
+      } catch (fErr) {
+        console.warn('Error dispatching friend milestone push:', fErr)
+      }
+    }
+
+    // 2. Enviar notificación push al propio fumador en su móvil
+    try {
+      const selfResponse = await fetch('/api/push/send', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({
+          userIds: [smokerId],
+          title: `🎉 ¡${weeksText} sin fumar!`,
+          body: `¡Enhorabuena, ${smokerName}! Has alcanzado ${weeksText} sin fumar. ¡Tus amigos y guardianes han sido avisados!`,
+          url: '/dashboard/plant',
+        }),
+      })
+      const selfData = await selfResponse.json().catch(() => ({}))
+      totalDelivered += selfData?.deliveredTo || 0
+    } catch (sErr) {
+      console.warn('Error dispatching self milestone push:', sErr)
+    }
+
+    return { success: true, dispatchedCount: totalDelivered }
   } catch (err) {
     console.warn('Error dispatching milestone push notification:', err)
     return { success: false, dispatchedCount: 0 }

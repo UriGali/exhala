@@ -1,9 +1,9 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
-import { X, Send, Users, Info, Sparkles, CheckCheck, Loader2 } from 'lucide-react'
+import { X, Send, Users, Info, Sparkles, CheckCheck, Loader2, UserPlus } from 'lucide-react'
 import { supabase } from '@/lib/supabase/client'
-import GroupInfoModal from '@/components/GroupInfoModal'
+import GroupInfoModal, { FriendSummary } from '@/components/GroupInfoModal'
 
 export interface GroupChatData {
   id: string
@@ -31,8 +31,11 @@ interface GroupChatModalProps {
   group: GroupChatData
   currentUserId: string | null
   currentUserName: string
+  currentUserAvatarUrl?: string | null
+  friends?: FriendSummary[]
   onClose: () => void
   onFriendAdded?: (friendId: string) => void
+  onMembersAdded?: () => void
 }
 
 const QUICK_GROUP_PROMPTS = [
@@ -46,15 +49,77 @@ export default function GroupChatModal({
   group,
   currentUserId,
   currentUserName,
+  currentUserAvatarUrl,
+  friends,
   onClose,
   onFriendAdded,
+  onMembersAdded,
 }: GroupChatModalProps) {
   const [messages, setMessages] = useState<GroupMessageItem[]>([])
   const [inputText, setInputText] = useState<string>('')
   const [loading, setLoading] = useState<boolean>(true)
   const [isSending, setIsSending] = useState<boolean>(false)
   const [showInfoModal, setShowInfoModal] = useState<boolean>(false)
+  const [openAddMembersDirectly, setOpenAddMembersDirectly] = useState<boolean>(false)
+  const [myAvatar, setMyAvatar] = useState<string | null>(currentUserAvatarUrl || null)
+  const [memberProfilesMap, setMemberProfilesMap] = useState<
+    Record<string, { name: string; avatar_url: string | null }>
+  >({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  // Cargar avatar del usuario activo si no viene en las props
+  useEffect(() => {
+    if (currentUserAvatarUrl) {
+      setMyAvatar(currentUserAvatarUrl)
+      return
+    }
+    if (!currentUserId) return
+
+    async function fetchMyAvatar() {
+      try {
+        const { data } = await supabase
+          .from('profiles')
+          .select('avatar_url')
+          .eq('id', currentUserId)
+          .maybeSingle()
+        if (data?.avatar_url) setMyAvatar(data.avatar_url)
+      } catch (err) {
+        console.warn('Error fetching current user avatar:', err)
+      }
+    }
+
+    fetchMyAvatar()
+  }, [currentUserId, currentUserAvatarUrl])
+
+  // Cargar mapa de perfiles de miembros del grupo para avatares fiables
+  useEffect(() => {
+    async function fetchMemberProfiles() {
+      try {
+        const { data } = await supabase
+          .from('group_members')
+          .select('user_id, profile:profiles(id, full_name, avatar_url)')
+          .eq('group_id', group.id)
+
+        if (data && Array.isArray(data)) {
+          const map: Record<string, { name: string; avatar_url: string | null }> = {}
+          data.forEach((item: any) => {
+            const prof = Array.isArray(item.profile) ? item.profile[0] : item.profile
+            if (prof && item.user_id) {
+              map[item.user_id] = {
+                name: prof.full_name || 'Compañero',
+                avatar_url: prof.avatar_url || null,
+              }
+            }
+          })
+          setMemberProfilesMap(map)
+        }
+      } catch (err) {
+        console.warn('Error fetching group member profiles:', err)
+      }
+    }
+
+    fetchMemberProfiles()
+  }, [group.id])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -68,7 +133,10 @@ export default function GroupChatModal({
 
     async function loadMessages(isInitial = false) {
       try {
-        const res = await fetch(`/api/groups/${group.id}/messages`)
+        const { data: { session } } = await supabase.auth.getSession()
+        const res = await fetch(`/api/groups/${group.id}/messages`, {
+          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+        })
         if (res.ok) {
           const data = await res.json()
           if (data.success && Array.isArray(data.messages) && isMounted) {
@@ -205,7 +273,7 @@ export default function GroupChatModal({
         id: currentUserId,
         full_name: currentUserName,
         role: 'smoker',
-        avatar_url: null,
+        avatar_url: myAvatar,
       },
     }
 
@@ -213,12 +281,18 @@ export default function GroupChatModal({
     setTimeout(scrollToBottom, 50)
 
     try {
+      const { data: { session } } = await supabase.auth.getSession()
       const res = await fetch(`/api/groups/${group.id}/messages`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
         body: JSON.stringify({
           sender_id: currentUserId,
           content,
+          sender_name: currentUserName,
+          sender_avatar: myAvatar,
         }),
       })
 
@@ -290,10 +364,28 @@ export default function GroupChatModal({
             </div>
 
             <div className="flex items-center gap-1.5">
-              {/* BOTÓN INFORMACIÓN DEL GRUPO (VER MIEMBROS Y AÑADIR AMIGOS) */}
+              {/* BOTÓN RÁPIDO AÑADIR AMIGOS AL GRUPO */}
               <button
                 type="button"
-                onClick={() => setShowInfoModal(true)}
+                onClick={() => {
+                  setOpenAddMembersDirectly(true)
+                  setShowInfoModal(true)
+                }}
+                className="h-8 px-2.5 rounded-full bg-[rgba(232,183,94,0.12)] border border-[rgba(232,183,94,0.25)] text-[#E8B75E] hover:bg-[rgba(232,183,94,0.22)] text-xs font-semibold flex items-center gap-1 transition-all active:scale-95 cursor-pointer shadow-xs"
+                title="Añadir amigos a este grupo"
+                aria-label="Añadir amigos al grupo"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span className="text-[11px] hidden xs:inline">Añadir</span>
+              </button>
+
+              {/* BOTÓN INFORMACIÓN DEL GRUPO (VER MIEMBROS) */}
+              <button
+                type="button"
+                onClick={() => {
+                  setOpenAddMembersDirectly(false)
+                  setShowInfoModal(true)
+                }}
                 className="w-8 h-8 rounded-full bg-[rgba(232,183,94,0.08)] border border-[rgba(232,183,94,0.22)] flex items-center justify-center text-[#E8B75E] hover:bg-[rgba(232,183,94,0.18)] transition-all cursor-pointer"
                 title="Información y miembros del grupo"
                 aria-label="Ver miembros del grupo"
@@ -334,30 +426,70 @@ export default function GroupChatModal({
             ) : (
               messages.map((msg) => {
                 const isMe = msg.sender_id === currentUserId
-                const senderName = isMe ? 'Tú' : msg.sender?.full_name || 'Compañero'
-                const initials = senderName
+                const rawSender: any = msg.sender
+                const senderObj = Array.isArray(rawSender) ? rawSender[0] : rawSender
+
+                const cached = memberProfilesMap[msg.sender_id]
+                const senderName = isMe
+                  ? 'Tú'
+                  : (senderObj?.full_name || cached?.name || 'Compañero')
+
+                const avatarUrl = isMe
+                  ? (myAvatar || senderObj?.avatar_url || cached?.avatar_url || null)
+                  : (senderObj?.avatar_url || cached?.avatar_url || null)
+
+                const rawInitialsSource = isMe ? (currentUserName || 'Tú') : senderName
+                const initials = rawInitialsSource
                   .split(' ')
+                  .filter(Boolean)
                   .map((w: string) => w[0])
                   .join('')
                   .slice(0, 2)
-                  .toUpperCase()
+                  .toUpperCase() || 'U'
 
                 return (
                   <div
                     key={msg.id}
                     className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}
                   >
-                    {/* Nombre del remitente (si no soy yo) */}
-                    {!isMe && (
-                      <div className="flex items-center gap-1.5 mb-1 px-1">
-                        <div className="w-4 h-4 rounded-full bg-[#E8B75E]/20 text-[#E8B75E] text-[9px] font-bold flex items-center justify-center">
-                          {initials}
-                        </div>
-                        <span className="text-[11px] font-medium text-[#A9BBA4]">
-                          {senderName}
-                        </span>
+                    {/* FOTO DE PERFIL ANTES DE SU NOMBRE */}
+                    <div className="flex items-center gap-1.5 mb-1 px-1">
+                      {/* Foto de perfil */}
+                      <div
+                        className="w-[22px] h-[22px] rounded-full overflow-hidden flex items-center justify-center shrink-0 border border-[rgba(232,183,94,0.35)] shadow-xs"
+                        style={{
+                          background: avatarUrl
+                            ? '#16241C'
+                            : 'radial-gradient(circle at 35% 30%, #EFC471, #E8B75E)',
+                          color: '#1B1710',
+                        }}
+                        title={senderName}
+                      >
+                        {avatarUrl ? (
+                          <img
+                            src={avatarUrl}
+                            alt={senderName}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none'
+                            }}
+                          />
+                        ) : (
+                          <span className="text-[9.5px] font-bold leading-none">
+                            {initials}
+                          </span>
+                        )}
                       </div>
-                    )}
+
+                      {/* Nombre */}
+                      <span
+                        className={`text-[11.5px] font-medium leading-none ${
+                          isMe ? 'text-[#E8B75E]' : 'text-[#A9BBA4]'
+                        }`}
+                      >
+                        {senderName}
+                      </span>
+                    </div>
 
                     {/* Burbuja del mensaje */}
                     <div
@@ -438,8 +570,14 @@ export default function GroupChatModal({
           groupDescription={group.description}
           currentUserId={currentUserId}
           currentUserName={currentUserName}
-          onClose={() => setShowInfoModal(false)}
+          initialOpenAddMembers={openAddMembersDirectly}
+          availableFriends={friends}
+          onClose={() => {
+            setShowInfoModal(false)
+            setOpenAddMembersDirectly(false)
+          }}
           onFriendAdded={onFriendAdded}
+          onMembersAdded={onMembersAdded}
         />
       )}
     </>

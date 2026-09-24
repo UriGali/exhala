@@ -67,6 +67,28 @@ interface FriendItem {
   cooldownSeconds?: number
 }
 
+interface FriendRequestItem {
+  id: string
+  requesterId: string
+  name: string
+  initials: string
+  role: 'smoker' | 'friend'
+  createdAt: string
+}
+
+interface SearchResultUser {
+  id: string
+  full_name: string | null
+  role: 'smoker' | 'friend'
+  avatar_url: string | null
+  smoke_free_since: string | null
+}
+
+const isValidUUID = (id?: string | null): boolean => {
+  if (!id) return false
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+}
+
 function getInitials(name: string) {
   const parts = name.trim().split(' ').filter(Boolean)
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase()
@@ -86,6 +108,17 @@ function PlantPageContent() {
   const [userName, setUserName] = useState<string>('Un amigo')
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState<boolean>(true)
+
+  // Código de escuadrón y añadir amigos en Inicio
+  const [squadCode, setSquadCode] = useState<string>('')
+  const [copiedCode, setCopiedCode] = useState<boolean>(false)
+  const [showAddFriendModal, setShowAddFriendModal] = useState<boolean>(false)
+  const [searchQuery, setSearchQuery] = useState<string>('')
+  const [searchResults, setSearchResults] = useState<SearchResultUser[]>([])
+  const [isSearching, setIsSearching] = useState<boolean>(false)
+  const [sentRequestMap, setSentRequestMap] = useState<Record<string, boolean>>({})
+  const [pendingReceived, setPendingReceived] = useState<FriendRequestItem[]>([])
+  const [processingFriendId, setProcessingFriendId] = useState<string | null>(null)
 
   // Datos propios de la planta
   const [myWaterings, setMyWaterings] = useState<number>(0)
@@ -137,7 +170,10 @@ function PlantPageContent() {
   // 1. Cargar Grupos
   const loadGroupsData = useCallback(async (currentUserId: string) => {
     try {
-      const res = await fetch(`/api/groups?userId=${currentUserId}`)
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(`/api/groups?userId=${currentUserId}`, {
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+      })
       if (res.ok) {
         const data = await res.json()
         if (data.success && Array.isArray(data.groups)) {
@@ -212,6 +248,40 @@ function PlantPageContent() {
   // 4. Cargar Amigos y Plantas
   const loadFriendsData = useCallback(async (currentUserId: string) => {
     try {
+      // 4.1 Cargar solicitudes pendientes recibidas
+      try {
+        const { data: pendingRows } = await supabase
+          .from('friendships')
+          .select(`
+            id,
+            smoker_id,
+            friend_id,
+            status,
+            created_at,
+            smoker:profiles!friendships_smoker_id_fkey(id, full_name, role)
+          `)
+          .eq('friend_id', currentUserId)
+          .eq('status', 'pending')
+
+        if (pendingRows) {
+          setPendingReceived(
+            pendingRows.map((r: any) => ({
+              id: r.id,
+              requesterId: r.smoker?.id || r.smoker_id,
+              name: r.smoker?.full_name || 'Compañero',
+              initials: getInitials(r.smoker?.full_name || 'Compañero'),
+              role: r.smoker?.role || 'smoker',
+              createdAt: r.created_at,
+            }))
+          )
+        } else {
+          setPendingReceived([])
+        }
+      } catch (e) {
+        console.warn('Error loading pending friendships:', e)
+      }
+
+      // 4.2 Cargar amistades aceptadas
       const { data: friendships } = await supabase
         .from('friendships')
         .select(`
@@ -346,6 +416,19 @@ function PlantPageContent() {
         if (!activeUserId) return
 
         setUserId(activeUserId)
+        setSquadCode(`EXHALA-${activeUserId.slice(0, 5).toUpperCase()}`)
+
+        if (typeof window !== 'undefined') {
+          const urlParams = new URLSearchParams(window.location.search)
+          if (urlParams.get('action') === 'add') {
+            setShowAddFriendModal(true)
+          }
+          const inviteFriendId = urlParams.get('invite')
+          if (inviteFriendId && inviteFriendId !== activeUserId) {
+            setShowAddFriendModal(true)
+            setSearchQuery(inviteFriendId)
+          }
+        }
 
         // Renderizado instantáneo de la interfaz
         setLoading(false)
@@ -538,6 +621,250 @@ function PlantPageContent() {
     }, 1000)
     return () => clearInterval(interval)
   }, [sosOpen, sosBreathTimer])
+
+  // Copiar código de escuadrón
+  const handleCopySquadCode = () => {
+    if (typeof navigator !== 'undefined' && squadCode) {
+      navigator.clipboard.writeText(squadCode)
+      setCopiedCode(true)
+      showToast('¡Código de escuadrón copiado al portapapeles! 📋')
+      setTimeout(() => setCopiedCode(false), 2000)
+    }
+  }
+
+  // Compartir enlace de invitación
+  const handleShareInvite = async () => {
+    const inviteUrl =
+      typeof window !== 'undefined'
+        ? `${window.location.origin}/dashboard/plant?invite=${userId}`
+        : ''
+    const shareText = `¡Únete a mi red en Exhala para dejar de fumar juntos! 🌿 Mi código de escuadrón es ${squadCode}: ${inviteUrl}`
+
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({
+          title: 'Únete a mi escuadrón en Exhala',
+          text: shareText,
+          url: inviteUrl,
+        })
+        return
+      } catch {}
+    }
+
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(shareText)
+      showToast('¡Enlace de invitación copiado! Compártelo con tus amigos 📲')
+    }
+  }
+
+  // Búsqueda en vivo de usuarios por Nombre, Código de Escuadrón o ID
+  useEffect(() => {
+    if (!searchQuery.trim() || !userId) {
+      setSearchResults([])
+      setIsSearching(false)
+      return
+    }
+
+    const timer = setTimeout(async () => {
+      setIsSearching(true)
+      try {
+        const query = searchQuery.trim()
+        const cleanQuery = query.replace(/^EXHALA-/i, '').toLowerCase()
+
+        if (isValidUUID(cleanQuery)) {
+          const { data, error } = await supabase
+            .from('profiles')
+            .select('id, full_name, role, avatar_url, smoke_free_since')
+            .eq('id', cleanQuery)
+            .neq('id', userId)
+
+          if (!error && data && data.length > 0) {
+            setSearchResults(data)
+            setIsSearching(false)
+            return
+          }
+        }
+
+        const { data: nameData, error: nameError } = await supabase
+          .from('profiles')
+          .select('id, full_name, role, avatar_url, smoke_free_since')
+          .ilike('full_name', `%${query}%`)
+          .neq('id', userId)
+          .limit(10)
+
+        let results = nameData || []
+
+        if (cleanQuery.length >= 4 && /^[0-9a-f]+$/i.test(cleanQuery)) {
+          const { data: allProfiles } = await supabase
+            .from('profiles')
+            .select('id, full_name, role, avatar_url, smoke_free_since')
+            .neq('id', userId)
+            .limit(30)
+
+          if (allProfiles) {
+            const codeMatches = allProfiles.filter(
+              (p) => p.id.toLowerCase().startsWith(cleanQuery) && !results.some((r) => r.id === p.id)
+            )
+            results = [...results, ...codeMatches]
+          }
+        }
+
+        setSearchResults(results)
+      } catch (err) {
+        console.error('Error searching users in plant:', err)
+      } finally {
+        setIsSearching(false)
+      }
+    }, 280)
+
+    return () => clearTimeout(timer)
+  }, [searchQuery, userId])
+
+  // Enviar solicitud de amistad
+  const handleSendFriendRequest = async (targetUser: SearchResultUser) => {
+    if (!userId || !targetUser.id || processingFriendId) return
+    setProcessingFriendId(targetUser.id)
+
+    try {
+      // 1. Si ya nos envió solicitud él, aceptarla directamente
+      const { data: existingReverse } = await supabase
+        .from('friendships')
+        .select('id, status')
+        .eq('smoker_id', targetUser.id)
+        .eq('friend_id', userId)
+        .maybeSingle()
+
+      if (existingReverse) {
+        if (existingReverse.status === 'pending') {
+          await supabase
+            .from('friendships')
+            .update({ status: 'accepted' })
+            .eq('id', existingReverse.id)
+
+          showToast(
+            `¡Conectados! ${targetUser.full_name?.split(' ')[0] || 'Tu amigo'} ya te había enviado solicitud. 🤝`
+          )
+          loadFriendsData(userId)
+          return
+        } else if (existingReverse.status === 'accepted') {
+          showToast('Ya estáis conectados como amigos.')
+          return
+        }
+      }
+
+      // 2. Comprobar si ya enviamos nosotros
+      const { data: existingDirect } = await supabase
+        .from('friendships')
+        .select('id, status')
+        .eq('smoker_id', userId)
+        .eq('friend_id', targetUser.id)
+        .maybeSingle()
+
+      if (existingDirect) {
+        if (existingDirect.status === 'accepted') {
+          showToast('Ya estáis conectados como amigos.')
+        } else {
+          showToast('Ya tienes una solicitud pendiente enviada a este usuario.')
+        }
+        return
+      }
+
+      // 3. Crear solicitud
+      const { error } = await supabase
+        .from('friendships')
+        .insert({
+          smoker_id: userId,
+          friend_id: targetUser.id,
+          status: 'pending',
+        })
+
+      if (error) {
+        if (error.code === '23505') {
+          showToast('Ya tienes una conexión o solicitud con este usuario.')
+        } else {
+          throw error
+        }
+      } else {
+        setSentRequestMap((prev) => ({ ...prev, [targetUser.id]: true }))
+        showToast(`¡Solicitud enviada a ${targetUser.full_name?.split(' ')[0] || 'tu amigo'}! 🌿`)
+
+        try {
+          await supabase.from('sos_notifications').insert({
+            smoker_id: userId,
+            friend_id: targetUser.id,
+            message: `${userName} te ha enviado una solicitud de amistad en Exhala.`,
+          })
+        } catch {}
+
+        try {
+          confetti({
+            particleCount: 30,
+            spread: 50,
+            origin: { y: 0.65 },
+            colors: ['#E8B75E', '#A9BBA4', '#52B788'],
+          })
+        } catch {}
+
+        loadFriendsData(userId)
+      }
+    } catch (err: any) {
+      console.error('Error sending friend request:', err)
+      showToast(err.message || 'No se pudo enviar la solicitud.')
+    } finally {
+      setProcessingFriendId(null)
+    }
+  }
+
+  // Aceptar solicitud de amistad recibida
+  const handleAcceptRequest = async (request: FriendRequestItem) => {
+    if (!userId || processingFriendId) return
+    setProcessingFriendId(request.id)
+
+    try {
+      const { error } = await supabase
+        .from('friendships')
+        .update({ status: 'accepted' })
+        .eq('id', request.id)
+
+      if (error) throw error
+
+      setPendingReceived((prev) => prev.filter((r) => r.id !== request.id))
+      showToast(`¡Ahora eres amigo de ${request.name.split(' ')[0]}! 🤝`)
+
+      try {
+        confetti({
+          particleCount: 40,
+          spread: 60,
+          origin: { y: 0.6 },
+          colors: ['#E8B75E', '#52B788', '#F1EEE2'],
+        })
+      } catch {}
+
+      loadFriendsData(userId)
+    } catch (err: any) {
+      console.error('Error accepting friend request:', err)
+      showToast('No se pudo aceptar la solicitud.')
+    } finally {
+      setProcessingFriendId(null)
+    }
+  }
+
+  // Rechazar solicitud de amistad
+  const handleRejectRequest = async (request: FriendRequestItem) => {
+    if (!userId || processingFriendId) return
+    setProcessingFriendId(request.id)
+
+    try {
+      await supabase.from('friendships').delete().eq('id', request.id)
+      setPendingReceived((prev) => prev.filter((r) => r.id !== request.id))
+      showToast('Solicitud rechazada.')
+    } catch (err) {
+      console.error('Error rejecting friend request:', err)
+      showToast('No se pudo rechazar la solicitud.')
+    } finally {
+      setProcessingFriendId(null)
+    }
+  }
 
   // Acción: Regar planta propia o de un amigo
   const handleWaterPlant = async (targetSmokerId: string, friendName?: string) => {
@@ -967,26 +1294,87 @@ function PlantPageContent() {
             /* TABLA LIMPIA DE AMIGOS                                          */
             /* =============================================================== */
             friendsList.length === 0 ? (
-              <div className="py-10 text-center space-y-3 p-6 rounded-3xl border border-[rgba(232,183,94,0.1)] bg-[rgba(255,255,255,0.01)]">
-                <Users className="w-8 h-8 text-[#E8B75E]/60 mx-auto" />
-                <div className="space-y-1">
-                  <h3 className="font-fraunces font-medium text-sm text-[#F1EEE2]">
-                    Aún no tienes amigos conectados
-                  </h3>
-                  <p className="text-xs text-[#7C9481] max-w-xs mx-auto">
-                    Conectar con amigos y guardianes multiplica por 3 el éxito de no fumar.
-                  </p>
+              <div className="space-y-3">
+                {pendingReceived.length > 0 && (
+                  <div
+                    onClick={() => setShowAddFriendModal(true)}
+                    className="p-3 rounded-2xl border border-[rgba(232,183,94,0.3)] bg-[rgba(232,183,94,0.08)] flex items-center justify-between cursor-pointer hover:bg-[rgba(232,183,94,0.14)] transition-all shadow-xs"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-full bg-[#E8B75E] text-[#1B1710] font-bold text-xs flex items-center justify-center shadow-xs">
+                        {pendingReceived.length}
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-[#F1EEE2]">
+                          {pendingReceived.length === 1
+                            ? '1 solicitud de amistad recibida'
+                            : `${pendingReceived.length} solicitudes recibidas`}
+                        </h4>
+                        <span className="text-[10.5px] text-[#A9BBA4]">Toca para responder</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-[#E8B75E]" />
+                  </div>
+                )}
+
+                <div className="py-10 text-center space-y-3 p-6 rounded-3xl border border-[rgba(232,183,94,0.1)] bg-[rgba(255,255,255,0.01)]">
+                  <Users className="w-8 h-8 text-[#E8B75E]/60 mx-auto" />
+                  <div className="space-y-1">
+                    <h3 className="font-fraunces font-medium text-sm text-[#F1EEE2]">
+                      Aún no tienes amigos conectados
+                    </h3>
+                    <p className="text-xs text-[#7C9481] max-w-xs mx-auto">
+                      Conectar con amigos y guardianes multiplica por 3 el éxito de no fumar.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddFriendModal(true)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-gradient-to-r from-[#EFC471] to-[#E8B75E] text-[#1B1710] text-xs font-bold hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer shadow-md"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>Buscar y Añadir Amigos</span>
+                  </button>
                 </div>
-                <Link
-                  href="/dashboard/friends"
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-[#E8B75E]/15 border border-[#E8B75E]/30 text-[#E8B75E] text-xs font-semibold hover:bg-[#E8B75E]/25 transition-all"
-                >
-                  <UserPlus className="w-3.5 h-3.5" />
-                  <span>Buscar y Añadir Amigos</span>
-                </Link>
               </div>
             ) : (
               <div className="space-y-2">
+                {pendingReceived.length > 0 && (
+                  <div
+                    onClick={() => setShowAddFriendModal(true)}
+                    className="p-3 rounded-2xl border border-[rgba(232,183,94,0.3)] bg-[rgba(232,183,94,0.08)] flex items-center justify-between cursor-pointer hover:bg-[rgba(232,183,94,0.14)] transition-all mb-2 shadow-xs"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-full bg-[#E8B75E] text-[#1B1710] font-bold text-xs flex items-center justify-center shadow-xs">
+                        {pendingReceived.length}
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-[#F1EEE2]">
+                          {pendingReceived.length === 1
+                            ? '1 solicitud de amistad recibida'
+                            : `${pendingReceived.length} solicitudes recibidas`}
+                        </h4>
+                        <span className="text-[10.5px] text-[#A9BBA4]">Toca para responder</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-[#E8B75E]" />
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between pt-1 pb-0.5 px-1">
+                  <span className="text-xs text-[#7C9481]">Tus compañeros de camino</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddFriendModal(true)}
+                    className="px-3 py-1 rounded-full bg-[#E8B75E]/15 border border-[#E8B75E]/30 text-[#E8B75E] text-xs font-semibold flex items-center gap-1.5 hover:bg-[#E8B75E]/25 transition-all cursor-pointer active:scale-95 shadow-xs"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>Añadir Amigo</span>
+                    {pendingReceived.length > 0 && (
+                      <span className="w-2 h-2 rounded-full bg-[#E8547C] animate-pulse" />
+                    )}
+                  </button>
+                </div>
                 {friendsList.map((friend) => {
                   const unread = unreadCounts[friend.id] || 0
                   return (
@@ -1443,8 +1831,295 @@ function PlantPageContent() {
           group={activeChatGroup}
           currentUserId={userId}
           currentUserName={userName}
+          currentUserAvatarUrl={profile?.avatar_url || null}
+          friends={friendsList.map((f) => ({
+            id: f.id,
+            name: f.name,
+            initials: f.initials,
+            role: f.role,
+          }))}
           onClose={() => setActiveChatGroup(null)}
+          onMembersAdded={() => {
+            if (userId) loadGroupsData(userId)
+          }}
         />
+      )}
+
+      {/* =================================================================== */}
+      {/* 11. MODAL AÑADIR AMIGOS EN INICIO (CÓDIGO DE ESCUADRÓN Y BÚSQUEDA)  */}
+      {/* =================================================================== */}
+      {showAddFriendModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200 select-none">
+          <div
+            className="w-full sm:w-[390px] max-h-[88vh] rounded-t-[32px] sm:rounded-[32px] border border-[rgba(232,183,94,0.2)] flex flex-col overflow-hidden shadow-2xl animate-in slide-in-from-bottom duration-300"
+            style={{
+              background: 'radial-gradient(120% 90% at 50% -10%, #253A2C 0%, #16241C 50%, #0F1913 100%)',
+              color: '#F1EEE2',
+            }}
+          >
+            {/* Cabecera */}
+            <header className="pt-4 px-5 pb-3 border-b border-[rgba(232,183,94,0.12)] flex items-center justify-between bg-[rgba(255,255,255,0.02)]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-[rgba(232,183,94,0.12)] border border-[rgba(232,183,94,0.25)] flex items-center justify-center text-[#E8B75E]">
+                  <UserPlus className="w-4 h-4 text-[#E8B75E]" />
+                </div>
+                <div>
+                  <h3 className="font-fraunces font-medium text-[16px] text-[#F1EEE2] leading-tight">
+                    Añadir Amigos
+                  </h3>
+                  <p className="text-[11px] text-[#7C9481]">
+                    Tu escuadrón de apoyo sin humo
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddFriendModal(false)
+                  setSearchQuery('')
+                  setSearchResults([])
+                }}
+                className="w-8 h-8 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-[#A9BBA4] hover:text-white transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </header>
+
+            <div className="flex-1 p-5 overflow-y-auto space-y-4 no-scrollbar">
+              {/* 1. Tarjeta Código de Escuadrón Propio */}
+              <div
+                className="p-4 rounded-2xl border border-[rgba(232,183,94,0.2)] space-y-2.5"
+                style={{
+                  background: 'linear-gradient(180deg, rgba(232,183,94,0.08), rgba(255,255,255,0.015))',
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-[10.5px] uppercase font-bold tracking-wider text-[#E8B75E]">
+                    Tu Código de Escuadrón
+                  </span>
+                  <span className="text-[10px] text-[#7C9481]">Comparte con amigos</span>
+                </div>
+
+                <div className="flex items-center justify-between bg-black/40 border border-white/10 px-3.5 py-2.5 rounded-xl">
+                  <span className="font-mono font-bold text-sm tracking-widest text-[#F1EEE2]">
+                    {squadCode || `EXHALA-${userId?.slice(0, 5).toUpperCase() || 'RED'}`}
+                  </span>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={handleCopySquadCode}
+                      className="px-2.5 py-1 rounded-lg bg-[rgba(232,183,94,0.15)] border border-[rgba(232,183,94,0.3)] text-[#E8B75E] text-xs font-semibold flex items-center gap-1 hover:bg-[rgba(232,183,94,0.25)] transition-all cursor-pointer active:scale-95"
+                      title="Copiar código"
+                    >
+                      {copiedCode ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-400" />
+                          <span className="text-emerald-400 text-[11px]">Copiado</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5" />
+                          <span className="text-[11px]">Copiar</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleShareInvite}
+                      className="p-1 rounded-lg bg-white/5 border border-white/10 text-[#A9BBA4] hover:text-[#F1EEE2] transition-colors cursor-pointer"
+                      title="Compartir enlace"
+                    >
+                      <Share2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Solicitudes Recibidas Pendientes (si hay) */}
+              {pendingReceived.length > 0 && (
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="font-fraunces font-medium text-xs text-[#E8B75E]">
+                      Solicitudes pendientes ({pendingReceived.length})
+                    </span>
+                    <span className="text-[10px] text-[#7C9481]">Esperan tu respuesta</span>
+                  </div>
+
+                  <div className="space-y-2">
+                    {pendingReceived.map((req) => (
+                      <div
+                        key={req.id}
+                        className="p-3 rounded-2xl border border-[rgba(232,183,94,0.25)] bg-[rgba(232,183,94,0.06)] flex items-center justify-between gap-3"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#EFC471] to-[#E8B75E] text-[#1B1710] font-bold text-xs flex items-center justify-center shrink-0">
+                            {req.initials}
+                          </div>
+                          <div className="min-w-0">
+                            <h4 className="font-medium text-[13px] text-[#F1EEE2] truncate">
+                              {req.name}
+                            </h4>
+                            <span className="text-[10.5px] text-[#A9BBA4]">
+                              {req.role === 'smoker' ? 'Dejando de fumar' : 'Guardián'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleAcceptRequest(req)}
+                            disabled={processingFriendId === req.id}
+                            className="h-8 px-3 rounded-full bg-gradient-to-r from-[#EFC471] to-[#E8B75E] text-[#1B1710] text-xs font-bold flex items-center gap-1 shadow-sm hover:scale-105 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                          >
+                            {processingFriendId === req.id ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <>
+                                <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                                <span>Aceptar</span>
+                              </>
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRejectRequest(req)}
+                            disabled={processingFriendId === req.id}
+                            className="w-8 h-8 rounded-full bg-white/5 border border-white/10 text-[#A9BBA4] hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+                            title="Rechazar"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 3. Buscador en vivo de usuarios */}
+              <div className="space-y-2 pt-1">
+                <span className="text-xs text-[#A9BBA4] font-medium block px-1">
+                  Buscar personas por nombre o código:
+                </span>
+
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#7C9481]" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Escribe un nombre o EXHALA-XXXXX..."
+                    className="w-full h-11 pl-10 pr-10 rounded-2xl bg-white/5 border border-[rgba(232,183,94,0.18)] text-[#F1EEE2] text-xs placeholder:text-[#7C9481] focus:outline-none focus:border-[#E8B75E] transition-colors"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#7C9481] hover:text-white"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Resultados de búsqueda */}
+                {isSearching ? (
+                  <div className="py-8 flex flex-col items-center justify-center gap-2">
+                    <Loader2 className="w-5 h-5 animate-spin text-[#E8B75E]" />
+                    <span className="text-xs text-[#7C9481]">Buscando en la comunidad...</span>
+                  </div>
+                ) : searchQuery.trim() && searchResults.length === 0 ? (
+                  <div className="py-8 text-center space-y-1 p-4 rounded-2xl bg-white/[0.02] border border-white/5">
+                    <Users className="w-6 h-6 text-[#7C9481] mx-auto opacity-60" />
+                    <p className="text-xs text-[#A9BBA4]">No se encontraron usuarios</p>
+                    <p className="text-[11px] text-[#7C9481]">
+                      Prueba con otro nombre o asegúrate de que el código sea correcto.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {searchResults.map((user) => {
+                      const isFriend = friendsList.some((f) => f.id === user.id)
+                      const isSent = Boolean(sentRequestMap[user.id])
+                      const isProcessing = processingFriendId === user.id
+
+                      return (
+                        <div
+                          key={user.id}
+                          className="p-3 rounded-2xl border border-[rgba(232,183,94,0.12)] bg-[rgba(255,255,255,0.025)] hover:border-[rgba(232,183,94,0.25)] transition-all flex items-center justify-between gap-3"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#3B5240] to-[#22321F] border border-[rgba(232,183,94,0.18)] text-[#E8B75E] font-bold text-xs flex items-center justify-center shrink-0">
+                              {getInitials(user.full_name || 'Compañero')}
+                            </div>
+                            <div className="min-w-0">
+                              <h4 className="font-medium text-[13px] text-[#F1EEE2] truncate">
+                                {user.full_name || 'Compañero'}
+                              </h4>
+                              <span className="text-[10.5px] text-[#7C9481]">
+                                {user.role === 'smoker' ? 'Dejando de fumar' : 'Guardián'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="shrink-0">
+                            {isFriend ? (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#52B788] bg-[rgba(82,183,136,0.1)] border border-[rgba(82,183,136,0.25)] px-2.5 py-1 rounded-full">
+                                <Check className="w-3 h-3" />
+                                <span>Amigo</span>
+                              </span>
+                            ) : isSent ? (
+                              <span className="inline-flex items-center gap-1 text-[10.5px] font-medium text-[#E8B75E] bg-[rgba(232,183,94,0.1)] border border-[rgba(232,183,94,0.25)] px-2.5 py-1 rounded-full">
+                                <Clock className="w-3 h-3" />
+                                <span>Enviada</span>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleSendFriendRequest(user)}
+                                disabled={isProcessing}
+                                className="inline-flex items-center gap-1.5 text-[11.5px] font-bold text-[#1B1710] bg-gradient-to-r from-[#EFC471] to-[#E8B75E] px-3.5 py-1.5 rounded-full hover:scale-105 active:scale-95 transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                              >
+                                {isProcessing ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <>
+                                    <UserPlus className="w-3.5 h-3.5" />
+                                    <span>Añadir</span>
+                                  </>
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Pie del modal */}
+            <footer className="p-3.5 border-t border-[rgba(232,183,94,0.1)] bg-[rgba(0,0,0,0.25)] flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddFriendModal(false)
+                  setSearchQuery('')
+                  setSearchResults([])
+                }}
+                className="text-xs font-semibold text-[#E8B75E] hover:text-[#F1EEE2] py-2 px-4 rounded-xl bg-white/5 border border-white/10 transition-colors cursor-pointer"
+              >
+                Cerrar
+              </button>
+            </footer>
+          </div>
+        </div>
       )}
 
       {showCreateGroupModal && (

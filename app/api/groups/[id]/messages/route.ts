@@ -53,7 +53,7 @@ export async function POST(
     const { id: groupId } = await params
     const authHeader = request.headers.get('Authorization') || request.headers.get('authorization')
     const body = await request.json()
-    const { sender_id, content } = body
+    const { sender_id, content, sender_name, sender_avatar } = body
 
     if (!sender_id || !content?.trim()) {
       return NextResponse.json({ error: 'sender_id and content are required' }, { status: 400 })
@@ -98,9 +98,9 @@ export async function POST(
           created_at: nowIso,
           sender: {
             id: sender_id,
-            full_name: 'Tú',
+            full_name: sender_name || 'Tú',
             role: 'smoker',
-            avatar_url: null,
+            avatar_url: sender_avatar || null,
           },
         },
       })
