@@ -65,7 +65,21 @@ export default function GroupChatModal({
   const [memberProfilesMap, setMemberProfilesMap] = useState<
     Record<string, { name: string; avatar_url: string | null }>
   >({})
+  const [enlargedAvatar, setEnlargedAvatar] = useState<{
+    url: string | null
+    name: string
+    initials: string
+  } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!enlargedAvatar) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setEnlargedAvatar(null)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [enlargedAvatar])
 
   // Cargar avatar del usuario activo si no viene en las props
   useEffect(() => {
@@ -455,16 +469,25 @@ export default function GroupChatModal({
                   >
                     {/* FOTO DE PERFIL ANTES DE SU NOMBRE */}
                     <div className="flex items-center gap-1.5 mb-1 px-1">
-                      {/* Foto de perfil */}
-                      <div
-                        className="w-[22px] h-[22px] rounded-full overflow-hidden flex items-center justify-center shrink-0 border border-[rgba(232,183,94,0.35)] shadow-xs"
+                      {/* Foto de perfil ampliable */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEnlargedAvatar({
+                            url: avatarUrl,
+                            name: senderName,
+                            initials,
+                          })
+                        }
+                        className="w-[23px] h-[23px] rounded-full overflow-hidden flex items-center justify-center shrink-0 border border-[rgba(232,183,94,0.35)] shadow-xs cursor-pointer hover:scale-115 hover:border-[#E8B75E] active:scale-90 transition-all focus:outline-none"
                         style={{
                           background: avatarUrl
                             ? '#16241C'
                             : 'radial-gradient(circle at 35% 30%, #EFC471, #E8B75E)',
                           color: '#1B1710',
                         }}
-                        title={senderName}
+                        title={`Ampliar foto de ${senderName}`}
+                        aria-label={`Ampliar foto de ${senderName}`}
                       >
                         {avatarUrl ? (
                           <img
@@ -480,16 +503,25 @@ export default function GroupChatModal({
                             {initials}
                           </span>
                         )}
-                      </div>
+                      </button>
 
-                      {/* Nombre */}
-                      <span
-                        className={`text-[11.5px] font-medium leading-none ${
+                      {/* Nombre ampliable */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEnlargedAvatar({
+                            url: avatarUrl,
+                            name: senderName,
+                            initials,
+                          })
+                        }
+                        className={`text-[11.5px] font-medium leading-none cursor-pointer hover:underline focus:outline-none text-left ${
                           isMe ? 'text-[#E8B75E]' : 'text-[#A9BBA4]'
                         }`}
+                        title={`Ampliar foto de ${senderName}`}
                       >
                         {senderName}
-                      </span>
+                      </button>
                     </div>
 
                     {/* Burbuja del mensaje */}
@@ -580,6 +612,62 @@ export default function GroupChatModal({
           onFriendAdded={onFriendAdded}
           onMembersAdded={onMembersAdded}
         />
+      )}
+
+      {/* MODAL FOTO DE PERFIL AMPLIADA EN FORMA REDONDA (MEDIA PANTALLA) */}
+      {enlargedAvatar && (
+        <div
+          onClick={() => setEnlargedAvatar(null)}
+          className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-6 animate-in fade-in duration-200 cursor-pointer select-none"
+        >
+          {/* Botón cerrar */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setEnlargedAvatar(null)
+            }}
+            className="absolute top-6 right-6 w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 flex items-center justify-center text-[#F1EEE2] transition-colors cursor-pointer z-10"
+            aria-label="Cerrar foto"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          {/* Contenedor de la foto redonda ampliada a media pantalla */}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="flex flex-col items-center animate-in zoom-in-75 duration-250 ease-out cursor-default"
+          >
+            <div className="w-[min(68vw,280px)] h-[min(68vw,280px)] rounded-full overflow-hidden border-[4.5px] border-[#E8B75E] shadow-[0_0_60px_rgba(232,183,94,0.45)] flex items-center justify-center bg-[#16241C] relative transition-transform">
+              {enlargedAvatar.url ? (
+                <img
+                  src={enlargedAvatar.url}
+                  alt={enlargedAvatar.name}
+                  className="w-full h-full object-cover rounded-full"
+                />
+              ) : (
+                <div
+                  className="w-full h-full flex items-center justify-center text-6xl font-bold font-fraunces text-[#1B1710]"
+                  style={{
+                    background: 'radial-gradient(circle at 35% 30%, #EFC471, #E8B75E)',
+                  }}
+                >
+                  {enlargedAvatar.initials}
+                </div>
+              )}
+            </div>
+
+            {/* Nombre e indicación */}
+            <div className="mt-5 text-center space-y-1">
+              <h3 className="font-fraunces text-xl font-semibold text-[#F1EEE2] tracking-wide">
+                {enlargedAvatar.name}
+              </h3>
+              <p className="text-xs text-[#A9BBA4]">
+                Toca en cualquier lugar para cerrar
+              </p>
+            </div>
+          </div>
+        </div>
       )}
     </>
   )

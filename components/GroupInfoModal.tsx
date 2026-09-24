@@ -63,6 +63,11 @@ export default function GroupInfoModal({
   const [selectedFriendIds, setSelectedFriendIds] = useState<string[]>([])
   const [isSavingMembers, setIsSavingMembers] = useState<boolean>(false)
   const [friendSearchQuery, setFriendSearchQuery] = useState<string>('')
+  const [enlargedAvatar, setEnlargedAvatar] = useState<{
+    url: string | null
+    name: string
+    initials: string
+  } | null>(null)
 
   const showToast = (msg: string) => {
     setToastMessage(msg)
@@ -458,9 +463,19 @@ export default function GroupInfoModal({
                   >
                     {/* Avatar & Nombre */}
                     <div className="flex items-center gap-3 min-w-0">
-                      <div
-                        className="w-[38px] h-[38px] rounded-full overflow-hidden flex items-center justify-center text-[12.5px] font-semibold text-[#1B1710] shrink-0 border border-white/10 shadow-xs"
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEnlargedAvatar({
+                            url: member.avatar_url || null,
+                            name: member.name,
+                            initials: member.initials,
+                          })
+                        }
+                        className="w-[38px] h-[38px] rounded-full overflow-hidden flex items-center justify-center text-[12.5px] font-semibold text-[#1B1710] shrink-0 border border-white/10 shadow-xs cursor-pointer hover:scale-110 hover:border-[#E8B75E] active:scale-95 transition-all focus:outline-none"
                         style={{ background: member.avatar_url ? '#16241C' : gradientBg }}
+                        title={`Ampliar foto de ${member.name}`}
+                        aria-label={`Ampliar foto de ${member.name}`}
                       >
                         {member.avatar_url ? (
                           <img
@@ -474,7 +489,7 @@ export default function GroupInfoModal({
                         ) : (
                           member.initials
                         )}
-                      </div>
+                      </button>
 
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
@@ -587,6 +602,62 @@ export default function GroupInfoModal({
           )}
         </footer>
       </div>
+
+      {/* MODAL FOTO DE PERFIL AMPLIADA EN FORMA REDONDA */}
+      {enlargedAvatar && (
+        <div
+          onClick={() => setEnlargedAvatar(null)}
+          className="fixed inset-0 z-[130] bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-6 animate-in fade-in duration-200 cursor-pointer select-none"
+        >
+          {/* Botón cerrar */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setEnlargedAvatar(null)
+            }}
+            className="absolute top-6 right-6 w-11 h-11 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 flex items-center justify-center text-[#F1EEE2] transition-colors cursor-pointer z-10"
+            aria-label="Cerrar foto"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
+          {/* Contenedor central de la foto redonda ampliada */}
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="flex flex-col items-center animate-in zoom-in-75 duration-250 ease-out cursor-default"
+          >
+            <div className="w-[min(68vw,280px)] h-[min(68vw,280px)] rounded-full overflow-hidden border-[4.5px] border-[#E8B75E] shadow-[0_0_60px_rgba(232,183,94,0.45)] flex items-center justify-center bg-[#16241C] relative transition-transform">
+              {enlargedAvatar.url ? (
+                <img
+                  src={enlargedAvatar.url}
+                  alt={enlargedAvatar.name}
+                  className="w-full h-full object-cover rounded-full"
+                />
+              ) : (
+                <div
+                  className="w-full h-full flex items-center justify-center text-6xl font-bold font-fraunces text-[#1B1710]"
+                  style={{
+                    background: 'radial-gradient(circle at 35% 30%, #EFC471, #E8B75E)',
+                  }}
+                >
+                  {enlargedAvatar.initials}
+                </div>
+              )}
+            </div>
+
+            {/* Nombre e indicación */}
+            <div className="mt-5 text-center space-y-1">
+              <h3 className="font-fraunces text-xl font-semibold text-[#F1EEE2] tracking-wide">
+                {enlargedAvatar.name}
+              </h3>
+              <p className="text-xs text-[#A9BBA4]">
+                Toca en cualquier lugar para cerrar
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
